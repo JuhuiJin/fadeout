@@ -1,0 +1,291 @@
+---
+title: "mediation_sim"
+output: html_document
+date: "2025-02-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Set wd 
+output_path <- "../output/"
+```
+
+
+```{r pressure, echo=FALSE}
+## code to synthetically create the star data, based on the summary stats of the variables
+set.seed(123) # For reproducibility
+
+# Define the number of new observations
+n_existing <- 11599
+n_new <- 2 * n_existing
+
+# Generate synthetic data
+data <- data.frame(
+  ID = 1:n_new,
+  Female = rbinom(n_new, 1, 0.471),
+  FreeLunch = rbinom(n_new, 1, 0.606),
+  RaceWhite = rbinom(n_new, 1, 0.628),
+  RaceBlack = rbinom(n_new, 1, 0.364),
+  RaceAsian = rbinom(n_new, 1, 0.0028),
+  RaceHispanic = rbinom(n_new, 1, 0.0018),
+  RaceNative = rbinom(n_new, 1, 0.0012),
+  InitialSmallClass = rbinom(n_new, 1, 0.261),
+  SmallK = rbinom(n_new, 1, 0.164),
+  Small1 = rbinom(n_new, 1, 0.166),
+  Small2 = rbinom(n_new, 1, 0.174),
+  Small3 = rbinom(n_new, 1, 0.187),
+  latent_cog = rnorm(n_new, mean = 50, sd = 10), 
+  latent_ncog = rnorm(n_new, mean = 50, sd = 10)
+)
+
+# Ensure logical consistency (e.g., small class participation)
+data$SmallK <- ifelse(data$InitialSmallClass == 1, rbinom(n_new, 1, 0.6), data$SmallK)
+data$Small1 <- ifelse(data$SmallK == 1, rbinom(n_new, 1, 0.6), data$Small1)
+data$Small2 <- ifelse(data$Small1 == 1, rbinom(n_new, 1, 0.6), data$Small2)
+data$Small3 <- ifelse(data$Small2 == 1, rbinom(n_new, 1, 0.6), data$Small3)
+
+# Initialize other columns 
+data$SmallClassParticipation <- rowMeans(data[, c("SmallK", "Small1", "Small2", "Small3")], na.rm = TRUE)
+
+# Summarize the synthetic data
+summary(data)
+head(data)
+```
+
+# Bailey (2020)'s Trifecta Model of Skill-Building 
+```{r}
+set.seed(123) 
+# (phi_ncog + (1 - phi_ncog) * (1 + data$SmallClassParticipation)) * data$latent_ncog + rnorm(n_new, mean = 0, sd = 5)
+# Initial skills are a weighted average of treatment / environment effects + latent cognitive skills 
+# Interaction effects? 
+#data$TestScores_3 <- rnorm(n_new, mean = (1 + 0.5 * data$SmallClassParticipation) * data$latent_cog, sd = 5)
+data$TestScores_3 <- data$latent_cog + rnorm(n_new, mean = 3*data$SmallClassParticipation, sd = 0.25) 
+data$SocialSkills_3 <- rnorm(n_new, mean = data$latent_ncog + rnorm(n_new, mean = 3*data$SmallClassParticipation), sd = 0.25)
+
+# Define AR Process parameters 
+sigma <- 5
+gamma_ncog <- 0.95
+gamma_cog <- c(0.5, 0.75, 0.95)
+#gamma_cog <- 0.6
+phi <- 0.7
+
+mean_test <- mean(subset(data, SmallClassParticipation == 0)$TestScores_3, na.rm = T)
+mean_social <- mean(subset(data, SmallClassParticipation == 0)$SocialSkills_3, na.rm = T)
+
+generate_data <- function(gamma_cog){
+  for (grade in 4:8){
+  prev_col <- paste0("TestScores_", grade - 1) 
+  curr_col <- paste0("TestScores_", grade) 
+  # Post-treatment environment is the same for everyone (enough to sustain the average performance in Gr.3)
+  data[[curr_col]] <- (gamma_cog * data[[prev_col]]^phi + (1-gamma_cog) * ((mean_test)^phi))^(1/phi) + rnorm(n_new, mean = 0, sd = sigma)
+  }
+
+  for (grade in 4:8){ 
+    prev_col <- paste0("SocialSkills_", grade - 1) 
+    curr_col <- paste0("SocialSkills_", grade) 
+    data[[curr_col]] <- (gamma_ncog * data[[prev_col]]^phi + (1-gamma_ncog) * ((mean_social))^phi)^(1/phi) + rnorm(n_new, mean = 0, sd = sigma)
+  }
+
+  # Longer DataFrame 
+  data_long <- data %>% 
+    select(SmallClassParticipation, matches("^SocialSkills_|^TestScores_")) %>%
+    pivot_longer(cols = matches("^SocialSkills_|^TestScores_"), 
+               names_to = c(".value", "Grade"),
+               names_pattern = "(.*)_(\\d+)"
+               ) %>% 
+    mutate(Grade = as.numeric(Grade)) %>%
+    arrange(Grade) %>%
+    group_by(Grade, SmallClassParticipation) %>%
+    summarize(mean_social = mean(SocialSkills, na.rm = T), 
+            mean_test = mean(TestScores, na.rm = T))
+
+  # General Plot by Treatment Class 
+  plot_all <- ggplot(data = data_long, aes(x = Grade)) + 
+    geom_line(aes(y = mean_social, color = "Social Skills")) + 
+    geom_line(aes(y = mean_test, color = "Test Scores")) + 
+    labs(
+      x = "Grade",
+      y = "Mean Scores",
+      title = "Mean Social Skills and Test Scores over Time by Class-size Treatment",
+      color = "Legend"  # Title of the legend
+    ) + 
+    facet_wrap(~ SmallClassParticipation, scales = "free") + 
+    theme_minimal() + 
+    theme(plot.margin = margin(4, 4, 4, 4, unit = "cm"))
+
+  # Plot difference between treatment class 
+  plot_diff <- data_long %>%
+    filter(SmallClassParticipation %in% c(0,1)) %>%
+    group_by(Grade) %>%
+    pivot_wider(
+      names_from = SmallClassParticipation, 
+      values_from = c(mean_social, mean_test)
+    ) %>%
+    summarize(test_diff = mean_test_1 - mean_test_0, 
+            social_diff = mean_social_1 - mean_social_0) %>% 
+    ggplot(aes(x = Grade)) + 
+    geom_line(aes(y = test_diff, color = "Test Score Gap")) + 
+    geom_line(aes(y = social_diff, color = "Social Skill Gap")) + 
+    labs(
+      x = "Grade", 
+      y = "Skill difference between Treatment 1 and 0", 
+      title = "Difference in skills over Time between Class = 1, Class = 0 Groups"
+    ) + 
+    theme_minimal() + 
+    theme(plot.margin = margin(4, 4, 4, 4, unit = "cm"))
+  
+  return(list(plot_all = plot_all, plot_diff = plot_diff, data = data))
+}
+
+# As academic skills become more self-productive, the fade-out effect lessens. 
+
+# Check and save the plots 
+pdf(file.path(output_path, "simulation_plots.pdf"), width = 12, 8)
+output <- generate_data(gamma_cog[1])
+  plot(output[[1]])
+  plot(output[[2]])
+output <- generate_data(gamma_cog[2])
+  plot(output[[1]])
+  plot(output[[2]])
+output <- generate_data(gamma_cog[3])
+  plot(output[[1]])
+  plot(output[[2]])
+dev.off()
+
+
+# Define phi = 0.75 as baseline 
+output <- generate_data(gamma_cog[2])
+  # Always forget but need to reference [[]] otherwise you just get a list with the single element 
+data <- output[[3]]
+```
+
+
+```{r}
+# Compute mean for test scores
+data$MeanTestScores <- rowSums(data[, c("TestScores_3", "TestScores_4", 
+                                        "TestScores_5", "TestScores_6", 
+                                        "TestScores_7", "TestScores_8")], na.rm = TRUE)
+
+# Compute mean for test scores
+data$MeanSocialSkills <- rowSums(data[, c("SocialSkills_3", "SocialSkills_4", 
+                                        "SocialSkills_5", "SocialSkills_6", 
+                                        "SocialSkills_7", "SocialSkills_8")], na.rm = TRUE)
+
+# Returns on test scores 
+alpha_0 <- 15000
+alpha_1 <- 100 
+# Returns on social skills 
+alpha_2 <- 100
+alpha_3 <- 100
+sigma_earnings <- 5000  # Standard deviation of earnings noise
+
+# Generate Earnings
+data$Earnings <- alpha_0 +
+  alpha_1 * data$MeanTestScores + # Measurable cognitive skills 
+  500 * data$latent_cog + # Some influence from latent ability 
+  alpha_2 * data$MeanSocialSkills +
+  alpha_3 * data$SmallClassParticipation + 
+  rnorm(n_new, mean = 0, sd = sigma_earnings)
+
+# Summarize the dataset
+summary(data[, c("SocialSkills_3", "SocialSkills_8", "TestScores_3", "TestScores_8", "MeanTestScores", 
+                 "MeanSocialSkills", "SmallClassParticipation", "Earnings")])
+
+```
+
+
+```{r}
+ggplot(data = data %>%
+         select(Earnings, SmallClassParticipation) %>%
+         group_by(SmallClassParticipation) %>%
+         summarize(mean_earnings = mean(Earnings))
+         , aes(x = SmallClassParticipation)) + 
+  geom_point(aes(y = mean_earnings, color = "Earnings"), size = 2) + 
+  labs(
+    x = "Treatment Class", 
+    y = "Mean Earnings", 
+    title = "Mean Earnings by Exposure to Small Pre-k Classrooms"
+  ) + 
+  theme_minimal()
+```
+
+
+```{r}
+library(fixest) # For econometric modeling (e.g., feols)
+
+# 1. Baseline Estimators
+# (i) Using cognitive test scores only
+baseline_cog_model <- lm(Earnings ~ MeanTestScores, data = data)
+summary(baseline_cog_model)
+
+# (ii) Using both cognitive and non-cognitive measures
+baseline_cog_ncog_model <- lm(Earnings ~ MeanTestScores + MeanSocialSkills, data = data)
+summary(baseline_cog_ncog_model)
+
+# (iii) Using all cognitive, non-cognitive, and latent cognitive measures 
+baseline_combined_model <- lm(Earnings ~ MeanTestScores + MeanSocialSkills + latent_cog, data = data)
+summary(baseline_combined_model)
+
+# (iv) True Causal Effect, controlling for all latent factors 
+true_model <- lm(Earnings ~ latent_cog + latent_ncog + SmallClassParticipation, data = data)
+summary(true_model)
+
+# 2. Surrogate Estimator
+# Define treatment (W) as small class participation
+data$W <- data$SmallClassParticipation
+
+# (i) Estimate gamma (E[Y2 | Y1, G=O])
+surrogate_gamma_model <- lm(Earnings ~ MeanTestScores, data = data)
+gamma <- coef(surrogate_gamma_model)["MeanTestScores"]
+
+# (ii) Estimate beta (E[Y1 | W, G=E])
+surrogate_beta_model <- lm(MeanTestScores ~ W, data = data)
+beta <- coef(surrogate_beta_model)["W"]
+
+# Surrogate estimate: gamma * beta
+surrogate_estimate <- gamma * beta
+cat("Surrogate Estimate:", surrogate_estimate, "\n")
+
+# 3. LU Estimator
+# (i) Estimate gamma1 and gamma2 (E[Y2 | Y1, W, G=O])
+lu_gamma_model <- lm(Earnings ~ MeanTestScores + W, data = data)
+gamma1 <- coef(lu_gamma_model)["MeanTestScores"]
+gamma2 <- coef(lu_gamma_model)["W"]
+
+# (ii) Use the same beta from surrogate model
+# LU estimate: gamma1 * beta + gamma2
+lu_estimate <- gamma1 * beta + gamma2
+cat("LU Estimate:", lu_estimate, "\n")
+
+#4. ACME Estimator 
+acme_gamma_model <- lm(Earnings ~ MeanTestScores + W + MeanTestScores*W, data = data)
+gamma1 <- coef(acme_gamma_model)["MeanTestScores"]
+gamma2 <- coef(acme_gamma_model)["W"]
+
+acme_estimate <- gamma1 * beta + gamma2
+
+# Compare Results
+results <- data.frame(
+  Method = c("Baseline - Test Only", "Baseline - Test and Non-Cognitive", "Baseline - Test, Non-Cognitive, IQ", "True Causal Effect of Class Size", "Surrogate", "ACME", "LU"),
+  Estimate = c(
+    coef(baseline_cog_model)["MeanTestScores"],
+    coef(baseline_cog_ncog_model)["MeanTestScores"],
+    coef(baseline_combined_model)["MeanTestScores"],
+    coef(true_model)["SmallClassParticipation"],
+    surrogate_estimate,
+    acme_estimate, 
+    lu_estimate
+  )
+)
+print(results)
+```
+
+
+
