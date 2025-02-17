@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r} 
 source("../../setup/external.R") 
 output_path <- "../output/" 
-
+library(truncnorm)
 # Attrition in experimental data 
 # Use test scores starting from grade 1. New York data only has Grade 3 scores. 
 
@@ -37,16 +37,22 @@ star$native <- ifelse(star$race == 6, 1, 0)
 
 ## Replicate the covariate and treatment characteristics of the population 
 covars <- c("female", "lunch", "white", "black", "asian", "hispanic", "native", "smalli", "smallk")
+covars_min <- setdiff(covars, c("smalli", "smallk"))
 
 star_extract <- star %>%
+  group_by(across(all_of(covars_min))) %>%
+  mutate(covar_min_id = cur_group_id()) %>%
   group_by(across(all_of(covars))) %>%
   summarize(
     n = n(), 
     covar_id = cur_group_id(), 
+    covar_min_id = first(covar_min_id),
     probability = n / nrow(star),
     # Summarize test scores by covar group 
     mean_k = mean(avsumk), 
-    sd_k = sd(avsumk)
+    sd_k = sd(avsumk), 
+    min_k = min(avsumk), 
+    max_k = max(avsumk), 
   ) %>%
   drop_na(sd_k) 
 
@@ -64,9 +70,9 @@ data <- data.frame(
 
 # Draw Small K 
 # Suppose social skills are measured on same scale as test scores, with approximately same distribution within & across covariate groups
-data$test_k <- rnorm(n_new, data$mean_k, data$sd_k)
-data$social_k<- rnorm(n_new, data$mean_k, data$sd_k)
-
+data$test_k <- rtruncnorm(n_new, a = data$min_k, b = data$max_k, data$mean_k, data$sd_k)
+data$social_k <- rtruncnorm(n_new, a = data$min_k, b = data$max_k, data$mean_k, data$sd_k)
+  
 data <- data %>%
   select(-covar_id, -probability, -n, -mean_k, -sd_k)
 
@@ -91,8 +97,9 @@ data$small3 <- case_when(
 ## Balance Check
 summary(star)
 summary(data)
+```
 
-
+```{r}
 regress <- function(y, x, covars, data){
   formula <- as.formula(paste0(y, " ~ ", paste(x, collapse = " + "), " + ", paste(covars, collapse = " + ")))
   print(formula)
@@ -100,16 +107,10 @@ regress <- function(y, x, covars, data){
 }
 
 # Example usage
-regress("test_k", "smallk", covars, data)
-regress("avsumk", "smallk", covars, star)
-
-lm(test_k ~ smallk + black + white + female + lunch + asian + hispanic + native, data = data)
-lm(avsumk ~ smallk + black + white + female + lunch + asian + hispanic + native, data = star)
-
-d <- subset(data, covar_id == 4)
-lm(test_k ~ smallk, data = d)
-d
+regress("test_k", "smallk", covars_min, data)
+regress("avsumk", "smallk", covars_min, star)
 ```
+
 # Bailey (2020)'s Trifecta Model of Skill-Building 
 ```{r}
 set.seed(123)
@@ -117,7 +118,7 @@ set.seed(123)
 # Define Skill Generation Parameters 
 sigma <- 5
 gamma_ncog <- 0.95
-gamma_cog <- c(0.5, 0.75, 0.95)
+gamma_cog <- 0.5
 phi <- 0.7
 
 # Define small_class_participation 
@@ -134,7 +135,7 @@ for (grade in grades){
 }
 
 # Initialize grade 1 grades 
-test_mean_k <- mean(subset(star, small_class_participation == 0)[["avsumk"]], na.rm = T)
+test_mean_k <- mean(subset(data, smallk == 0)[["test_k"]], na.rm = T)
 data[["test_1"]] <- (gamma_cog * (gamma_cog * (data[["test_k"]])^phi + (1-gamma_cog) * ((test_means[1])^phi))^(1/phi) + rnorm(n_new, mean = 0, sd = sigma))
 data[["social_1"]] <- (gamma_cog * (gamma_cog * (data[["test_k"]])^phi + (1-gamma_cog) * ((test_means[1])^phi))^(1/phi) + rnorm(n_new, mean = 0, sd = sigma))
 ```
@@ -142,25 +143,28 @@ data[["social_1"]] <- (gamma_cog * (gamma_cog * (data[["test_k"]])^phi + (1-gamm
 
 ```{r}
 # Generate Data
-
 generate_data <- function(gamma_cog){
   for (grade in 2:8){
   prev_col <- paste0("test_", grade - 1)
   curr_col <- paste0("test_", grade) 
   # Post-treatment environment is the same for everyone (enough to sustain the average performance in Gr.3)
-  data[[curr_col]] <- (gamma_cog * (data[[prev_col]])^phi + (1-gamma_cog) * ((test_means[grade])^phi))^(1/phi) + rnorm(n_new, mean = 0, sd = sigma)
+  data[[curr_col]] <<- (gamma_cog * (data[[prev_col]])^phi + (1-gamma_cog) * ((test_mean_k)^phi))^(1/phi) + rnorm(n_new, mean = 0, sd = sigma)
   }
   for (grade in 2:8){ 
     prev_col <- paste0("social_", grade - 1) 
     curr_col <- paste0("social_", grade) 
-    data[[curr_col]] <- (gamma_ncog * (data[[prev_col]])^phi + (1-gamma_ncog) * ((test_means[grade]))^phi)^(1/phi) + rnorm(n_new, mean = 0, sd = sigma)
+    data[[curr_col]] <<- (gamma_ncog * (data[[prev_col]])^phi + (1-gamma_ncog) * ((test_mean_k))^phi)^(1/phi) + rnorm(n_new, mean = 0, sd = sigma)
   }
 }
 
-generate_data(gamma_cog)
+
+generate_data(0.5)
+data
+gamma_cog[1]
+data$small_class_participation <- rowMeans(data[, c("smallk", "small1", "small2", "small3")], na.rm = TRUE)
 
 data_long <- data %>%
-    select(smallk, small1, small2, small3, matches("^social_|^test_")) %>%
+    select(matches("^social_|^test_")) %>%
     pivot_longer(cols = matches("^social_|^test_"), 
                names_to = c(".value", "Grade"),
                names_pattern = "(.*)_(\\d+)"
@@ -171,20 +175,25 @@ data_long <- data %>%
     summarize(mean_social = mean(social, na.rm = T), 
             mean_test = mean(test, na.rm = T))
 
+plot_all <- ggplot(data = data_long, aes(x = Grade)) + 
+    geom_line(aes(y = mean_social, color = "Social Skills")) + 
+    geom_line(aes(y = mean_test, color = "Test Scores")) + 
+    labs(
+      x = "Grade",
+      y = "Mean Scores",
+      title = "Mean Social Skills and Test Scores over Time by Class-size Treatment",
+      color = "Legend"  # Title of the legend
+    ) + 
+    facet_wrap(~ smallclassparticipation, scales = "free") + 
+    theme_minimal() + 
+    theme(plot.margin = margin(4, 4, 4, 4, unit = "cm"))
+
 data_long
+data %>%
+  summarize(mean(test_k))
 
-star %>%
-  select(matches("^avsum\\d+$")) %>%
-  pivot_longer(cols = matches("^avsum\\d+$"), 
-               names_to = c(".value", "Grade"), 
-               names_pattern = "(.*)(\\d+)") %>%
-  mutate(Grade = as.numeric(Grade)) %>%
-  group_by(Grade) %>%
-  summarize(mean_test = mean(avsum, na.rm = T))
-
-star
-
-colnames(star)
+mean(data$test_k)
+mean(data$test_1)
 ```
 
 ```{r}
