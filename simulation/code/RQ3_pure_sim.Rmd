@@ -1,94 +1,70 @@
---- 
-title: "mediation_sim" 
-output: html_document 
-date: "2025-02-14" 
---- 
+---
+title: "mediation_sim"
+output: html_document
+date: "2025-02-14"
+---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE) 
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Load and Setup 
-```{r} 
-source("../../setup/external.R") 
-output_path <- "../output/" 
+```{r}
+source("../../setup/external.R")
+output_path <- "../output/"
 
-# Attrition in experimental data 
-# Use test scores starting from grade 1. New York data only has Grade 3 scores. 
-
-star <- read_dta(file.path(external_path, "star/STAR_extract.dta")) %>% 
-  select(smalli, smallk, small1, small2, small3, avsumk, avsum1, avsum2, avsum3, avsum4, avsum5, avsum6, avsum7, avsum8, newsch,female,lunch,race,white) %>% 
-  drop_na(smalli, smallk, small1, small2, small3, avsumk, avsum1, avsum2, avsum3, avsum4, avsum5, avsum6, avsum7, avsum8) 
+star_extract <- read_dta(file.path(external_path, "star/STAR_extract.dta")) %>%
+  select(smalli, avsum3, avsum4, avsum5, avsum6, avsum7, avsum8, newsch,female,lunch,race,white) %>%
+  drop_na(avsum3, avsum4, avsum5, avsum6, avsum7, avsum8)
 ```
 
 # Clean Data
 ```{r}
-# Rename the column 'lunch3' to 'lunch'
-colnames(star)[colnames(star) == "lunch3"] <- "lunch"
-
 # Add the 'black' column to star_raw where race equals 2
-star$black <- ifelse(star$race == 2, 1, 0)
-star$asian <- ifelse(star$race == 3, 1, 0) 
-star$hispanic <- ifelse(star$race == 4, 1, 0)
-star$native <- ifelse(star$race == 6, 1, 0)
+star_extract$black <- ifelse(star_extract$race == 2, 1, 0)
 
-## Replicate the covariate and treatment characteristics of the population 
-covars <- c("female", "lunch", "white", "black", "asian", "hispanic", "native", "smalli", "smallk")
-
-star_extract <- star %>%
-  group_by(across(all_of(covars))) %>%
-  summarize(
-    n = n(), 
-    covar_id = cur_group_id(), 
-    probability = n / nrow(star),
-    # Summarize test scores by covar group 
-    mean_k = mean(avsumk), 
-    sd_k = sd(avsumk)
-  ) %>%
-  drop_na(sd_k) 
-
-# Multinomial draw from ID's 
-draws <- rmultinom(1, size = n_new, prob = star_extract$probability)
-# Turn into vector
-covars <- rep(star_extract$covar_id, times = draws)
-
-data <- data.frame(
-  ID = 1:n_new, 
-  covar_id = covars
-) %>%
-  group_by(covar_id) %>%
-  left_join(star_extract, by = covar_id) 
-
-# Draw Small K 
-data$avsumk <- rnorm(n_new, data$mean_k, data$sd_k)
-
-data <- data %>%
-  select(-covar_id, -probability, -n, -mean_k, -sd_k)
-
-# Draw attrition & entrance as essentially random across covar groups, conditioned on previous treat status 
-star %>% 
-  filter(small2 == 0) %>%
-  summary()
-
-data$small1 <- case_when(
-  data$smallk == 1 ~ rbinom(n_new, 1, 0.9445),
-  data$smallk == 0 ~ rbinom(n_new, 1, 0.07109), 
-)
-data$small2 <- case_when(
-  data$small1 == 1 ~ rbinom(n_new, 1, 0.9842), 
-  data$small1 == 0 ~ rbinom(n_new, 1, 0.03849)
-)
-data$small3 <- case_when(
-  data$small2 == 1 ~ rbinom(n_new, 1, 0.991),
-  data$small2 == 0 ~ rbinom(n_new, 1, 0.04228)
-)
-
-## Balance Check
-summary(star)
-summary(data)
 ```
 
+```{r pressure, echo=FALSE}
+## code to synthetically create the star data, based on the summary stats of the variables
+set.seed(123) # For reproducibility
 
+# Define the number of new observations
+n_existing <- 11599
+n_new <- 2 * n_existing
+
+# Generate synthetic data
+data <- data.frame(
+  ID = 1:n_new,
+  Female = rbinom(n_new, 1, 0.471),
+  FreeLunch = rbinom(n_new, 1, 0.606),
+  RaceWhite = rbinom(n_new, 1, 0.628),
+  RaceBlack = rbinom(n_new, 1, 0.364),
+  RaceAsian = rbinom(n_new, 1, 0.0028),
+  RaceHispanic = rbinom(n_new, 1, 0.0018),
+  RaceNative = rbinom(n_new, 1, 0.0012),
+  InitialSmallClass = rbinom(n_new, 1, 0.261),
+  SmallK = rbinom(n_new, 1, 0.164),
+  Small1 = rbinom(n_new, 1, 0.166),
+  Small2 = rbinom(n_new, 1, 0.174),
+  Small3 = rbinom(n_new, 1, 0.187),
+  latent_cog = rnorm(n_new, mean = 50, sd = 10), 
+  latent_ncog = rnorm(n_new, mean = 50, sd = 10)
+)
+
+# Ensure logical consistency (e.g., small class participation)
+data$SmallK <- ifelse(data$InitialSmallClass == 1, rbinom(n_new, 1, 0.6), data$SmallK)
+data$Small1 <- ifelse(data$SmallK == 1, rbinom(n_new, 1, 0.6), data$Small1)
+data$Small2 <- ifelse(data$Small1 == 1, rbinom(n_new, 1, 0.6), data$Small2)
+data$Small3 <- ifelse(data$Small2 == 1, rbinom(n_new, 1, 0.6), data$Small3)
+
+# Initialize other columns 
+data$SmallClassParticipation <- rowMeans(data[, c("SmallK", "Small1", "Small2", "Small3")], na.rm = TRUE)
+
+# Summarize the synthetic data
+summary(data)
+head(data)
+```
 
 # Bailey (2020)'s Trifecta Model of Skill-Building 
 ```{r}
