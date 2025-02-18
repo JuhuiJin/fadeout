@@ -2,7 +2,7 @@
 external_path <- "/Users/juhui/Desktop/research/data/"
 
 # Package Installments 
-packages <- c("dplyr", "tidyr", "haven", "dplyr", "ggplot2", "fixest", "sn", "moments")
+packages <- c("dplyr", "tidyr", "haven", "dplyr", "ggplot2", "fixest")
 
 for (pkg in packages) {
   if (!require(pkg, character.only = TRUE)) {
