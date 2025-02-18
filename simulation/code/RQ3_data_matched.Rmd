@@ -54,6 +54,7 @@ star_extract <- star %>%
     sd_k = sd(avsumk), 
     min_k = min(avsumk), 
     max_k = max(avsumk), 
+    k_1_diff = mean(avsum1) - mean(avsumk)
   ) %>%
   drop_na(sd_k) 
 
@@ -111,7 +112,7 @@ summary(data)
 ```{R}
 set.seed(60)
 # Define Skill Generation Parameters 
-sigma <- 6
+sigma <- 8
 gamma_ncog <- 0.95
 gamma_cog <- 0.5
 phi <- 0.7
@@ -122,7 +123,9 @@ data <- data %>%
     mean_test_k_0 = mean(test_k[smallk == 0], na.rm = T), 
     mean_social_k_0 = mean(social_k[smallk == 0], na.rm = T), 
     mean_test_k_1 = mean(test_k[smallk == 1], na.rm = T), 
-    mean_social_k_1 = mean(social_k[smallk == 1], na.rm = T)
+    mean_social_k_1 = mean(social_k[smallk == 1], na.rm = T), 
+    mean_test_overall = mean(test_k, na.rm = T), 
+    mean_social_overall = mean(social_k, na.rm = T)
   ) %>%
   group_by(covar_id) %>%
   mutate(
@@ -130,9 +133,9 @@ data <- data %>%
     mean_social_k = mean(social_k, na.rm = T)
   )
 
-
-data[["test_1"]] <- gamma_cog * data[["test_k"]] + (1-gamma_cog) * (data[["mean_test_k"]]) + rnorm(n_new, mean = 0, sd = sigma)
-data[["social_1"]] <- gamma_ncog * data[["social_k"]] + (1-gamma_ncog) * (data[["mean_social_k"]]) + rnorm(n_new, mean = 0, sd = sigma)
+# Assume there is a discontinuous shift in environment from k to 1
+data[["test_1"]] <- gamma_cog * data[["test_k"]] + (1-gamma_cog) * (data[["mean_test_k"]] + data[["k_1_diff"]]) + rnorm(n_new, mean = 0, sd = sigma)
+data[["social_1"]] <- gamma_ncog * data[["social_k"]] + (1-gamma_ncog) * (data[["mean_social_k"]] + data[["k_1_diff"]]) + rnorm(n_new, mean = 0, sd = sigma)
 
 
 # For each grade, calculate the "counter-factual" environment 
@@ -155,18 +158,18 @@ generate_data <- function(gamma_cog, gamma_ncog){
     
     # Weight previous skills by gamma, and baseline environment by (1-Gamma)
     # Skills become more self-productive over time 
-    data[[curr_col]] <<- (((gamma + grade*0.025) * (data[[prev_col]]))^phi + ((1-gamma - grade*0.025) * data[[paste0("mean_", skill, "k_0")]])^phi)^(1/phi)  + rnorm(n_new, mean = 0, sd = sigma)
+    data[[curr_col]] <<- (((gamma + grade*0.015) * (data[[prev_col]]))^phi + ((1-gamma - grade*0.015) * (data[[paste0("mean_", skill, "k_0")]] + data[["white"]] * grade * 0.4))^phi)^(1/phi)  + rnorm(n_new, mean = 0, sd = sigma)
     }
     for (grade in 4:8){
     prev_col <- paste0(skill, grade - 1)
     curr_col <- paste0(skill, grade) 
     
-    data[[curr_col]] <<- (((gamma + grade*0.025) * (data[[prev_col]]))^phi + ((1-gamma - grade*0.025) * data[[paste0("mean_", skill, "k_0")]])^phi)^(1/phi)  + rnorm(n_new, mean = 0, sd = sigma)
+    data[[curr_col]] <<- (((gamma + grade*0.015) * (data[[prev_col]]))^phi + ((1-gamma - grade*0.015) * (data[[paste0("mean_", skill, "k_0")]] + data[["white"]] * grade * 0.4))^phi)^(1/phi)  + rnorm(n_new, mean = 0, sd = sigma)
     }
   }
 }
 
-generate_data(0.7, 0.90)
+generate_data(0.6, 0.90)
 ```
 
 
@@ -301,6 +304,32 @@ make_long_star <- function(covars) {
 
   return(star_long)
 }
+
+library(rlang)
+data_long <- make_long_data(c("black", "white", "lunch", "treat_flow"))
+star_long <- make_long_star(c("black", "white", "lunch", "treat_flow"))
+
+graph_scores <- function(...) { 
+  covars <- quos(...)
+  
+  ggplot() + 
+  geom_line(data = star_long %>% filter(!!covars), aes(x = Grade, y = mean_test, color = "Test Score (STAR)")) +
+  geom_line(data = data_long %>% filter(!!covars), aes(x = Grade, y = mean_test, color = "Test Score (Simulated)")) + 
+  geom_line(data = data_long %>% filter(!!covars), aes(x = Grade, y = mean_social, color = "Non-Cognitive Score (Simulated)")) +
+  theme_minimal() + 
+  labs(
+    x = "Grade", 
+    y = "Mean Score", 
+    title = "Impact of KG Class Quality for Treated Black, Free Lunch Students",
+    color = "Data Type", 
+    caption = "* for students treated until grade 3"
+  )
+}
+
+graph_scores(black == 1, lunch == 1, treat_flow == "to_3")
+
+covars <- quos(black == 1, lunch == 1, treat_flow == "to_3")
+covars
 ```
 
 
@@ -313,47 +342,51 @@ data_long <- make_long_data(c("black", "white", "lunch", "treat_flow"))
 star_long <- make_long_star(c("black", "white", "lunch", "treat_flow"))
 
 ggplot() + 
-  geom_line(data = star_long %>% filter(black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "STAR Data")) +
-  geom_line(data = data_long %>% filter(black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Simulated Data")) + 
+  geom_line(data = star_long %>% filter(black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (STAR)")) +
+  geom_line(data = data_long %>% filter(black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (Simulated)")) + 
+  geom_line(data = data_long %>% filter(black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_social, color = "Non-Cognitive Score (Simulated)")) +
   theme_minimal() + 
     theme(plot.margin = margin(4, 4, 4, 4, unit = "cm"))  + 
   labs(
     x = "Grade", 
-    y = "Mean Test Score", 
+    y = "Mean Score", 
     title = "Impact of KG Class Quality for Treated Black, Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
 
 ggplot() + 
-  geom_line(data = star_long %>% filter(white == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "STAR Data")) +
-  geom_line(data = data_long %>% filter(white == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Simulated Data")) + 
+  geom_line(data = star_long %>% filter(white == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (STAR)")) +
+  geom_line(data = data_long %>% filter(white == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (Simulated)")) + 
+  geom_line(data = data_long %>% filter(white == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_social, color = "Non-Cognitive Score (Simulated)")) +
   theme_minimal() + 
     theme(plot.margin = margin(4, 4, 4, 4, unit = "cm")) + 
   labs(
     x = "Grade", 
-    y = "Mean Test Score", 
+    y = "Mean Score", 
     title = "Impact of KG Class Quality for Treated White, Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
 
 ggplot() + 
-  geom_line(data = star_long %>% filter(black == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "STAR Data")) +
-  geom_line(data = data_long %>% filter(black == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Simulated Data")) + 
+  geom_line(data = star_long %>% filter(black == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (STAR)")) +
+  geom_line(data = data_long %>% filter(black == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (Simulated)")) + 
+  geom_line(data = data_long %>% filter(black == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_social, color = "Non-Cognitive Score (Simulated)")) +
   theme_minimal() + 
     theme(plot.margin = margin(4, 4, 4, 4, unit = "cm")) + 
   labs(
     x = "Grade", 
-    y = "Mean Test Score", 
+    y = "Mean Score", 
     title = "Impact of KG Class Quality for Treated Black, No Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
 
 ggplot() + 
-  geom_line(data = star_long %>% filter(white == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "STAR Data")) +
-  geom_line(data = data_long %>% filter(white == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Simulated Data")) + 
+  geom_line(data = star_long %>% filter(white == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (STAR)")) +
+  geom_line(data = data_long %>% filter(white == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (Simulated)")) + 
+  geom_line(data = data_long %>% filter(white == 1 & lunch == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_social, color = "Non-Cognitive Score (Simulated)")) +
   theme_minimal() + 
     theme(plot.margin = margin(4, 4, 4, 4, unit = "cm")) + 
   labs(
@@ -369,8 +402,9 @@ data_long <- make_long_data(c("female", "lunch", "black", "white", "treat_flow")
 star_long <- make_long_star(c("female", "lunch", "black", "white", "treat_flow"))
 
 ggplot() + 
-  geom_line(data = star_long %>% filter(female == 1 & black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "STAR Data")) +
-  geom_line(data = data_long %>% filter(female == 1 & black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Simulated Data")) + 
+  geom_line(data = star_long %>% filter(female == 1 & black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (STAR)")) +
+  geom_line(data = data_long %>% filter(female == 1 & black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Test Score (Simulated)")) + 
+  geom_line(data = data_long %>% filter(female == 1 & black == 1 & lunch == 1 & treat_flow == "to 3"), aes(x = Grade, y = mean_social, color = "Non-Cognitive Score (Simulated)")) +
   theme_minimal() + 
     theme(plot.margin = margin(4, 4, 4, 4, unit = "cm")) + 
   labs(
@@ -452,12 +486,23 @@ ggplot() +
 dev.off()
 ```
 ```{r}
-data_long <- make_long_data(c("black", "white", "treat_flow"))
-star_long <- make_long_star(c("black", "white", "treat_flow"))
+data_long <- make_long_data(c("black", "white", "lunch", "female", "treat_flow"))
+star_long <- make_long_star(c("black", "white", "lunch", "female", "treat_flow"))
 
 ggplot() + 
-  geom_line(data = star_long %>% filter(black == 1 & treat_flow == "never"), aes(x = Grade, y = mean_test, color = "STAR Data")) +
-  geom_line(data = data_long %>% filter(black == 1 & treat_flow == "never"), aes(x = Grade, y = mean_test, color = "Simulated Data")) + 
+  geom_line(data = star_long %>% filter(black == 1 & lunch == 1 & female == 1 & treat_flow == "never"), aes(x = Grade, y = mean_test, color = "STAR Data")) +
+  geom_line(data = data_long %>% filter(black == 1 & lunch == 1 & female == 1 & treat_flow == "never"), aes(x = Grade, y = mean_test, color = "Simulated Data")) + 
+  theme_minimal() + 
+  labs(
+    x = "Grade", 
+    y = "Mean Test Score", 
+    title = "Impact of KG Class Quality for Black, Female, Free Lunch Students",
+    color = "Data Type"
+  )
+
+ggplot() + 
+  geom_line(data = star_long %>% filter(white == 1 & lunch == 0 & female == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "STAR Data")) +
+  geom_line(data = data_long %>% filter(white == 1 & lunch == 0 & female == 0 & treat_flow == "to 3"), aes(x = Grade, y = mean_test, color = "Simulated Data")) + 
   theme_minimal() + 
   labs(
     x = "Grade", 
