@@ -111,7 +111,7 @@ summary(data)
 ```{R}
 set.seed(60)
 # Define Skill Generation Parameters 
-sigma <- 5
+sigma <- 6
 gamma_ncog <- 0.95
 gamma_cog <- 0.5
 phi <- 0.7
@@ -120,7 +120,9 @@ data <- data %>%
   group_by(covar_min_id) %>%
   mutate(
     mean_test_k_0 = mean(test_k[smallk == 0], na.rm = T), 
-    mean_social_k_0 = mean(social_k[smallk == 0], na.rm = T)
+    mean_social_k_0 = mean(social_k[smallk == 0], na.rm = T), 
+    mean_test_k_1 = mean(test_k[smallk == 1], na.rm = T), 
+    mean_social_k_1 = mean(social_k[smallk == 1], na.rm = T)
   ) %>%
   group_by(covar_id) %>%
   mutate(
@@ -164,7 +166,7 @@ generate_data <- function(gamma_cog, gamma_ncog){
   }
 }
 
-generate_data(0.5, 0.90)
+generate_data(0.7, 0.90)
 ```
 
 
@@ -176,7 +178,7 @@ regress <- function(y, x, covars, data){
   lm(formula, data = data)
 }
 
-# Example usage
+# Regress Smallk on Short-run Test Scores
 mod1 <- regress("test_k", "smallk", covars_min, data)
 mod2 <- regress("test_1", "smallk", covars_min, data)
 mod3 <- regress("test_2", "smallk", covars_min, data)
@@ -184,10 +186,22 @@ mod4 <- regress("test_3", "smallk", covars_min, data)
 mod5 <- regress("test_4", "smallk", covars_min, data)
 mod6 <- regress("test_5", "smallk", covars_min, data)
 
+mod1_star <- regress("avsumk", "smallk", covars_min, star)
+mod2_star <- regress("avsum1", "smallk", covars_min, star)
+mod3_star <- regress("avsum2", "smallk", covars_min, star)
+mod4_star <- regress("avsum3", "smallk", covars_min, star)
+mod5_star <- regress("avsum4", "smallk", covars_min, star)
+mod6_star <- regress("avsum5", "smallk", covars_min, star)
+
 
 table_test <- data.frame(
   Grade = c(1,2,3,4,5), 
   Effect_of_KSize = c(coef(mod2)["smallk"], coef(mod3)["smallk"], coef(mod4)["smallk"], coef(mod5)["smallk"],coef(mod6)["smallk"])
+)
+
+table_test_star <- data.frame(
+  Grade = c(1,2,3,4,5), 
+  Effect_of_KSize = c(coef(mod2_star)["smallk"], coef(mod3_star)["smallk"], coef(mod4_star)["smallk"], coef(mod5_star)["smallk"],coef(mod6_star)["smallk"])
 )
 
 mod1 <- regress("social_k", "smallk", covars_min, data)
@@ -206,6 +220,7 @@ table_social <- data.frame(
 ggplot() + 
   geom_point(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores")) + 
   geom_point(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores")) + 
+  geom_point(data = table_test_star, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (STAR)")) + 
   labs(
     x = "Grade", 
     y = "Score", 
@@ -216,17 +231,19 @@ ggplot() +
 
 pdf(file.path(output_path, "matched_simulation_plots.pdf"), width = 10, 7)
 ggplot() + 
-  geom_point(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores"), size = 2) + 
-  geom_line(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores")) + 
-  geom_point(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores"), size = 2) + 
-  geom_line(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores")) + 
+  geom_point(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (Simulated)"), size = 2) + 
+  geom_line(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (Simulated)")) + 
+  geom_point(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores (Simulated)"), size = 2) + 
+  geom_line(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores (Simulated)")) + 
+  geom_point(data = table_test_star, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (STAR)"), size = 2) + 
+  geom_line(data = table_test_star, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (STAR)")) + 
   labs(
     x = "Grade", 
     y = "Effect of KG Class Quality", 
     title = "Impact of KG Class Quality on Cognitive and Non-Cognitive Scores",
     color = "Score Type"
   ) + 
-  scale_color_manual(values = c("Test Scores" = "brown", "Non-Cognitive Scores" = "darkolivegreen")) + 
+  scale_color_manual(values = c("Test Scores (Simulated)" = "brown", "Non-Cognitive Scores (Simulated)" = "darkolivegreen", "Test Scores (STAR)" = "darkorange")) + 
   theme_minimal() + 
     theme(plot.margin = margin(4, 4, 4, 4, unit = "cm"), 
           plot.title = element_text(size = 13, face = "bold", hjust = 0.5))
