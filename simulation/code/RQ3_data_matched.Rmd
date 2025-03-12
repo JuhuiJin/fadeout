@@ -10,10 +10,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Load and Setup 
 ```{r} 
-source("../../setup/external.R") 
+source("../../setup/external.R")
 output_path <- "../output/" 
 library(truncnorm)
-# Attrition in experimental data 
+# Attrition in experimental data
 # Use test scores starting from grade 1. New York data only has Grade 3 scores. 
 
 star <- read_dta(file.path(external_path, "star/STAR_extract.dta")) %>% 
@@ -23,7 +23,7 @@ star <- read_dta(file.path(external_path, "star/STAR_extract.dta")) %>%
 
 # Clean Data
 ```{r}
-set.seed(60) 
+set.seed(50) 
 n_new <- 11559
 
 # Rename the column 'lunch3' to 'lunch'
@@ -34,7 +34,6 @@ star$black <- ifelse(star$race == 2, 1, 0)
 star$asian <- ifelse(star$race == 3, 1, 0) 
 star$hispanic <- ifelse(star$race == 4, 1, 0)
 star$native <- ifelse(star$race == 6, 1, 0)
-
 
 ## Replicate the covariate and treatment characteristics of the population 
 covars <- c("female", "lunch", "white", "black", "asian", "hispanic", "native", "smallk")
@@ -72,15 +71,8 @@ data <- data.frame(
 
 # Draw Small K 
 # Suppose social skills are measured on same scale as test scores, with approximately same distribution within & across covariate groups
-data$test_k <- rnorm(n_new,  data$mean_k, data$sd_k) 
 data$social_k <- rnorm(n_new,  data$mean_k, data$sd_k) 
-#data$social_k <- pmax(pmin(data$test_k, data$max_k), data$min_k)
-#mean_adjustment <- data$mean_k - mean(data$social_k, na.rm = TRUE)
-#data$social_k <- data$social_k + mean_adjustment
-
-#data$test_k <- pmax(pmin(data$test_k, data$max_k), data$min_k)
-#mean_adjustment <- data$mean_k - mean(data$test_k, na.rm = TRUE)
-#data$test_k <- data$test_k + mean_adjustment
+data$test_k <- rnorm(n_new,  data$mean_k, data$sd_k) 
 
 data <- data %>%
   select(-covar_id, -probability, -n, -mean_k, -sd_k)
@@ -110,9 +102,9 @@ summary(data)
 
 # Generation of Data
 ```{R}
-set.seed(60)
+set.seed(50)
 # Define Skill Generation Parameters 
-sigma <- 8
+sigma <- 5
 gamma_ncog <- 0.95
 gamma_cog <- 0.5
 phi <- 0.7
@@ -135,9 +127,20 @@ data <- data %>%
 
 # Assume there is a discontinuous shift in environment from k to 1
 data[["test_1"]] <- gamma_cog * data[["test_k"]] + (1-gamma_cog) * (data[["mean_test_k"]] + data[["k_1_diff"]]) + rnorm(n_new, mean = 0, sd = sigma)
-data[["social_1"]] <- gamma_ncog * data[["social_k"]] + (1-gamma_ncog) * (data[["mean_social_k"]] + data[["k_1_diff"]]) + rnorm(n_new, mean = 0, sd = sigma)
+data[["social_1"]] <- gamma_ncog * data[["test_k"]] + (1-gamma_ncog) * (data[["mean_social_k"]] + data[["k_1_diff"]]) + rnorm(n_new, mean = 0, sd = sigma)
 
-
+data <- data %>% 
+  group_by(covar_min_id) %>%
+  mutate(
+    mean_test_1_0 = mean(test_k[smallk == 0], na.rm = T), 
+    mean_social_1_0 = mean(test_k[smallk == 0], na.rm = T)
+  ) %>%
+  group_by(covar_id) %>%
+  mutate(
+    mean_test_1 = mean(test_1, na.rm = T), 
+    mean_social_1 = mean(test_1, na.rm = T)
+  )
+  
 # For each grade, calculate the "counter-factual" environment 
 grades <- c(1,2,3,4,5,6,7,8)
 
@@ -155,105 +158,25 @@ generate_data <- function(gamma_cog, gamma_ncog){
     treatment <- paste0("small", grade)
     
     phi <- 1
+    test_indicator <- as.numeric(skill == "test")
     
     # Weight previous skills by gamma, and baseline environment by (1-Gamma)
     # Skills become more self-productive over time 
-    data[[curr_col]] <<- (((gamma + grade*0.015) * (data[[prev_col]]))^phi + ((1-gamma - grade*0.015) * (data[[paste0("mean_", skill, "k_0")]] + data[["white"]] * grade * 0.4))^phi)^(1/phi)  + rnorm(n_new, mean = 0, sd = sigma)
+    data[[curr_col]] <<- (((gamma + grade*0.02) * (data[[prev_col]]))^phi + ((1-gamma - grade*0.02) * (data[[paste0("mean_", skill, "1_0")]] + test_indicator * grade * 0.2 + data[["black"]] * 2))^phi)^(1/phi)  + rnorm(n_new, mean = 0, sd = sigma)
     }
     for (grade in 4:8){
     prev_col <- paste0(skill, grade - 1)
     curr_col <- paste0(skill, grade) 
     
-    data[[curr_col]] <<- (((gamma + grade*0.015) * (data[[prev_col]]))^phi + ((1-gamma - grade*0.015) * (data[[paste0("mean_", skill, "k_0")]] + data[["white"]] * grade * 0.4))^phi)^(1/phi)  + rnorm(n_new, mean = 0, sd = sigma)
+    data[[curr_col]] <<- (((gamma + grade*0.02) * (data[[prev_col]]))^phi + ((1-gamma - grade*0.02) * (data[[paste0("mean_", skill, "1_0")]] + test_indicator * grade * 0.2 + data[["black"]] * 2))^phi)^(1/phi)  + rnorm(n_new, mean = 0, sd = sigma)
     }
   }
 }
 
-generate_data(0.6, 0.90)
+generate_data(0.60, 0.85)
 ```
 
 
-# Regressions 
-```{r}
-regress <- function(y, x, covars, data){
-  formula <- as.formula(paste0(y, " ~ ", paste(x, collapse = " + "), " + ", paste(covars, collapse = " + ")))
-  print(formula)
-  lm(formula, data = data)
-}
-
-# Regress Smallk on Short-run Test Scores
-mod1 <- regress("test_k", "smallk", covars_min, data)
-mod2 <- regress("test_1", "smallk", covars_min, data)
-mod3 <- regress("test_2", "smallk", covars_min, data)
-mod4 <- regress("test_3", "smallk", covars_min, data)
-mod5 <- regress("test_4", "smallk", covars_min, data)
-mod6 <- regress("test_5", "smallk", covars_min, data)
-
-mod1_star <- regress("avsumk", "smallk", covars_min, star)
-mod2_star <- regress("avsum1", "smallk", covars_min, star)
-mod3_star <- regress("avsum2", "smallk", covars_min, star)
-mod4_star <- regress("avsum3", "smallk", covars_min, star)
-mod5_star <- regress("avsum4", "smallk", covars_min, star)
-mod6_star <- regress("avsum5", "smallk", covars_min, star)
-
-
-table_test <- data.frame(
-  Grade = c(1,2,3,4,5), 
-  Effect_of_KSize = c(coef(mod2)["smallk"], coef(mod3)["smallk"], coef(mod4)["smallk"], coef(mod5)["smallk"],coef(mod6)["smallk"])
-)
-
-table_test_star <- data.frame(
-  Grade = c(1,2,3,4,5), 
-  Effect_of_KSize = c(coef(mod2_star)["smallk"], coef(mod3_star)["smallk"], coef(mod4_star)["smallk"], coef(mod5_star)["smallk"],coef(mod6_star)["smallk"])
-)
-
-mod1 <- regress("social_k", "smallk", covars_min, data)
-mod2 <- regress("social_1", "smallk", covars_min, data)
-mod3 <- regress("social_2", "smallk", covars_min, data)
-mod4 <- regress("social_3", "smallk", covars_min, data)
-mod5 <- regress("social_4", "smallk", covars_min, data)
-mod6 <- regress("social_5", "smallk", covars_min, data)
-
-table_social <- data.frame(
-  Grade = c(1,2,3,4,5), 
-  Effect_of_KSize = c(coef(mod2)["smallk"], coef(mod3)["smallk"], coef(mod4)["smallk"], coef(mod5)["smallk"], coef(mod6)["smallk"])
-)
-
-# Plot both effects 
-ggplot() + 
-  geom_point(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores")) + 
-  geom_point(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores")) + 
-  geom_point(data = table_test_star, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (STAR)")) + 
-  labs(
-    x = "Grade", 
-    y = "Score", 
-    title = "Impact of KG Class Quality on Cognitive and Non-Cognitive Scores", 
-    color = "Skill Type"
-  ) + 
-  theme_minimal()
-
-pdf(file.path(output_path, "matched_simulation_plots.pdf"), width = 10, 7)
-ggplot() + 
-  geom_point(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (Simulated)"), size = 2) + 
-  geom_line(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (Simulated)")) + 
-  geom_point(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores (Simulated)"), size = 2) + 
-  geom_line(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores (Simulated)")) + 
-  geom_point(data = table_test_star, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (STAR)"), size = 2) + 
-  geom_line(data = table_test_star, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (STAR)")) + 
-  labs(
-    x = "Grade", 
-    y = "Effect of KG Class Quality", 
-    title = "Impact of KG Class Quality on Cognitive and Non-Cognitive Scores",
-    color = "Score Type"
-  ) + 
-  scale_color_manual(values = c("Test Scores (Simulated)" = "brown", "Non-Cognitive Scores (Simulated)" = "darkolivegreen", "Test Scores (STAR)" = "darkorange")) + 
-  theme_minimal() + 
-    theme(plot.margin = margin(4, 4, 4, 4, unit = "cm"), 
-          plot.title = element_text(size = 13, face = "bold", hjust = 0.5))
-dev.off()
-```
-
-# Data Cleaning 
 ```{r}
 set.seed(633)
 data$small_class_participation <- rowMeans(data[, c("smallk", "small1", "small2", "small3")], na.rm = TRUE)
@@ -273,6 +196,126 @@ define_treat_flow <- function(data) {
 
 data <- define_treat_flow(data)
 star <- define_treat_flow(star)
+```
+
+# Regressions 
+```{r}
+regress <- function(y, x, covars, df){
+  formula <- as.formula(paste0(y, " ~ ", paste(x, collapse = " + "), " + ", paste(covars, collapse = " + ")))
+  feols(formula, data = df)
+}
+
+plot_coefs <- function(df, df_star, filter_str, covar_list, name) {
+  if(!is.na(filter_str)) {
+    # Parse_expr takes a string and converts into EXPRESSION to be evaluated 
+    filter_str <- rlang::parse_expr(filter_str)
+  
+    df <- df %>%
+      # Bang Bang to unquote 
+      filter(!!filter_str)
+    df_star <- df_star %>%
+      filter(!!filter_str)
+  }
+  
+  # Regress Smallk on Short-run Test Scores for filtered data
+  modk <- regress("test_k", "smallk", covar_list, df)
+  mod1 <- regress("test_1", "smallk", covar_list, df)
+  mod2 <- regress("test_2", "smallk", covar_list, df)
+  mod3 <- regress("test_3", "smallk", covar_list, df)
+  mod4 <- regress("test_4", "smallk", covar_list, df)
+  mod5 <- regress("test_5", "smallk", covar_list, df)
+  mod6 <- regress("test_6", "smallk", covar_list, df)
+  mod7 <- regress("test_7", "smallk", covar_list, df)
+  mod8 <- regress("test_8", "smallk", covar_list, df)
+
+  modk_star <- regress("avsumk", "smallk", covar_list, df_star)
+  mod1_star <- regress("avsum1", "smallk", covar_list, df_star)
+  mod2_star <- regress("avsum2", "smallk", covar_list, df_star)
+  mod3_star <- regress("avsum3", "smallk", covar_list, df_star)
+  mod4_star <- regress("avsum4", "smallk", covar_list, df_star)
+  mod5_star <- regress("avsum5", "smallk", covar_list, df_star)
+  mod6_star <- regress("avsum6", "smallk", covar_list, df_star)
+  mod7_star <- regress("avsum7", "smallk", covar_list, df_star)
+  mod8_star <- regress("avsum8", "smallk", covar_list, df_star)
+  
+  # Prepare tables for plotting
+  table_test <- data.frame(
+    Grade = c(0,1,2,3,4,5,6,7,8), 
+    Effect_of_KSize = c(coef(modk)["smallk"], coef(mod1)["smallk"], coef(mod2)["smallk"], coef(mod3)["smallk"], coef(mod4)["smallk"], coef(mod5)["smallk"], coef(mod6)["smallk"],coef(mod7)["smallk"], coef(mod8)["smallk"])
+  )
+  
+  table_test_star <- data.frame(
+  Grade = c(0,1,2,3,4,5,6,7,8), 
+  Effect_of_KSize = c(coef(modk_star)["smallk"], coef(mod1_star)["smallk"], coef(mod2_star)["smallk"], coef(mod3_star)["smallk"],
+                      coef(mod4_star)["smallk"], coef(mod5_star)["smallk"], coef(mod6_star)["smallk"], coef(mod7_star)["smallk"],
+                      coef(mod8_star)["smallk"]),
+  SE = c(sqrt(diag(vcov(modk_star)))["smallk"], sqrt(diag(vcov(mod1_star)))["smallk"], 
+         sqrt(diag(vcov(mod2_star)))["smallk"], sqrt(diag(vcov(mod3_star)))["smallk"], 
+         sqrt(diag(vcov(mod4_star)))["smallk"], sqrt(diag(vcov(mod5_star)))["smallk"], 
+         sqrt(diag(vcov(mod6_star)))["smallk"], sqrt(diag(vcov(mod7_star)))["smallk"], 
+         sqrt(diag(vcov(mod8_star)))["smallk"]
+  )
+  )
+  
+  # Regress for social scores on Short-run Test Scores for filtered data
+  modk <- regress("social_k", "smallk", covar_list, df)
+  mod1 <- regress("social_1", "smallk", covar_list, df)
+  mod2 <- regress("social_2", "smallk", covar_list, df)
+  mod3 <- regress("social_3", "smallk", covar_list, df)
+  mod4 <- regress("social_4", "smallk", covar_list, df)
+  mod5 <- regress("social_5", "smallk", covar_list, df)
+  mod6 <- regress("social_6", "smallk", covar_list, df)
+  mod7 <- regress("social_7", "smallk", covar_list, df)
+  mod8 <- regress("social_8", "smallk", covar_list, df)
+  
+  # Prepare social table
+  table_social <- data.frame(
+    Grade = c(0,1,2,3,4,5,6,7,8), 
+    Effect_of_KSize = c(coef(modk)["smallk"], coef(mod1)["smallk"], coef(mod2)["smallk"], coef(mod3)["smallk"], coef(mod4)["smallk"], coef(mod5)["smallk"], coef(mod6)["smallk"], coef(mod7)["smallk"],coef(mod8)["smallk"])
+  )
+  
+  # Plot both effects
+  file_path <- paste0("simulation_", name, ".pdf")
+  
+  pdf(file.path(output_path, file_path), width = 12, 7)
+  p <- ggplot() + 
+    geom_point(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (Simulated)"), size = 2) + 
+    geom_line(data = table_test, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (Simulated)")) + 
+    geom_point(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores (Simulated)"), size = 2) + 
+    geom_line(data = table_social, aes(x = Grade, y = Effect_of_KSize, color = "Non-Cognitive Scores (Simulated)")) + 
+    geom_point(data = table_test_star, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (STAR)"), size = 2) + 
+    geom_line(data = table_test_star, aes(x = Grade, y = Effect_of_KSize, color = "Test Scores (STAR)")) + 
+    geom_ribbon(data = table_test_star, 
+              aes(x = Grade, ymin = Effect_of_KSize - SE, ymax = Effect_of_KSize + SE, fill = "grey"), 
+              alpha = 0.2) + 
+    labs(
+      x = "Grade", 
+      y = "Effect of KG Class Quality",
+      title = paste0("Impact of KG Class Quality on Skills for ", name, " Students"),
+      color = "Score Type"
+    ) + 
+    scale_color_manual(values = c("Test Scores (Simulated)" = "brown", "Non-Cognitive Scores (Simulated)" = "darkolivegreen", "Test Scores (STAR)" = "darkorange")) + 
+    scale_fill_manual(values = c("grey" = "grey")) + 
+    guides(fill = "none") + 
+    theme_minimal() + 
+    theme(plot.margin = margin(4, 4, 4, 4, unit = "cm"), 
+          plot.title = element_text(size = 13, face = "bold", hjust = 0.5))
+  print(p)
+  dev.off()
+  print(p)
+}
+
+# Basic Plot
+plot_coefs(data, star, NA, covars_min, "All")
+plot_coefs(data, star, "white == 1 & lunch == 1", c("female"), "White, Free Lunch")
+plot_coefs(data, star, "white == 1 & lunch == 0", c("female"), "White, No Free Lunch")
+plot_coefs(data, star, "black == 1 & lunch == 1", c("female"), "Black, Free Lunch")
+#plot_coefs(data, star, "white == 1", c("lunch", "female"), "White")
+```
+
+
+# Data Cleaning 
+```{r}
 
 make_long_data <- function(covars) {
   data_long <- data %>%
@@ -305,31 +348,6 @@ make_long_star <- function(covars) {
   return(star_long)
 }
 
-library(rlang)
-data_long <- make_long_data(c("black", "white", "lunch", "treat_flow"))
-star_long <- make_long_star(c("black", "white", "lunch", "treat_flow"))
-
-graph_scores <- function(...) { 
-  covars <- quos(...)
-  
-  ggplot() + 
-  geom_line(data = star_long %>% filter(!!covars), aes(x = Grade, y = mean_test, color = "Test Score (STAR)")) +
-  geom_line(data = data_long %>% filter(!!covars), aes(x = Grade, y = mean_test, color = "Test Score (Simulated)")) + 
-  geom_line(data = data_long %>% filter(!!covars), aes(x = Grade, y = mean_social, color = "Non-Cognitive Score (Simulated)")) +
-  theme_minimal() + 
-  labs(
-    x = "Grade", 
-    y = "Mean Score", 
-    title = "Impact of KG Class Quality for Treated Black, Free Lunch Students",
-    color = "Data Type", 
-    caption = "* for students treated until grade 3"
-  )
-}
-
-graph_scores(black == 1, lunch == 1, treat_flow == "to_3")
-
-covars <- quos(black == 1, lunch == 1, treat_flow == "to_3")
-covars
 ```
 
 
@@ -350,7 +368,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Score", 
-    title = "Impact of KG Class Quality for Treated Black, Free Lunch Students",
+    title = "Mean Scores over Time for Treated Black, Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -364,7 +382,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Score", 
-    title = "Impact of KG Class Quality for Treated White, Free Lunch Students",
+    title = "Mean Scores over Time for Treated White, Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -378,7 +396,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Score", 
-    title = "Impact of KG Class Quality for Treated Black, No Free Lunch Students",
+    title = "Mean Scores over Time for Treated Black, No Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -392,7 +410,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Test Score", 
-    title = "Impact of KG Class Quality for Treated White, No Free Lunch Students",
+    title = "Mean Scores over Time for Treated White, No Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -410,7 +428,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Test Score", 
-    title = "Impact of KG Class Quality for Treated Black, Female, Free Lunch Students",
+    title = "Mean Scores over Time for Treated Black, Female, Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -423,7 +441,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Test Score", 
-    title = "Impact of KG Class Quality for Treated Black, Female, No Free Lunch Students",
+    title = "Mean Scores over Time for Treated Black, Female, No Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -436,7 +454,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Test Score", 
-    title = "Impact of KG Class Quality for Treated White, Female, Free Lunch Students",
+    title = "Mean Scores over Time for Treated White, Female, Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -449,7 +467,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Test Score", 
-    title = "Impact of KG Class Quality for Treated White, Female, No Free Lunch Students",
+    title = "Mean Scores over Time for Treated White, Female, No Free Lunch Students",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -466,7 +484,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Test Score", 
-    title = "Impact of KG Class Quality for Treated Students Receiving Free Lunch",
+    title = "Mean Scores over Time for Treated Students Receiving Free Lunch",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -479,7 +497,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Test Score", 
-    title = "Impact of KG Class Quality for Treated Students Not Receiving Free Lunch",
+    title = "Mean Scores over Time for Treated Students Not Receiving Free Lunch",
     color = "Data Type", 
     caption = "* for students treated until grade 3"
   )
@@ -496,7 +514,7 @@ ggplot() +
   labs(
     x = "Grade", 
     y = "Mean Test Score", 
-    title = "Impact of KG Class Quality for Black, Female, Free Lunch Students",
+    title = "Mean Scores over Time for Black, Female, Free Lunch Students",
     color = "Data Type"
   )
 

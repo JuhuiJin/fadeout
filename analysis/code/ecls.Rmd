@@ -1,0 +1,47 @@
+---
+title: "ecls"
+output: html_document
+date: "2025-03-10"
+---
+
+# Load and Setup 
+```{r} 
+source("../../setup/external.R")
+output_path <- "../output/" 
+
+# Original K-8 Sample 
+ecls <- read_dta(file.path(external_path, "ecls/ECLSK_Kto8_child_STATA.dta"))
+save(ecls, file = file.path(external_path, "ecls/raw_ecls.RData"))
+load(file.path(external_path, "ecls/raw_ecls.RData"))
+
+# Corrected ECLS (Fix incorrect thetas)
+corrected_ecls <- read_dta(file.path(external_path, "ecls/eclsk_theta_errata.dta"))
+colnames <- sub("_r$", "", colnames(corrected_ecls))
+
+ecls_clean <- ecls %>%
+  clean_names() %>%
+  left_join(corrected_ecls, by = "childid") %>%
+  select(-setdiff(colnames, "childid"))
+
+# Base Year School 
+school <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_School_STATA.dta")) %>%
+  clean_names()
+teacher <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_Teacher_STATA.dta")) %>%
+  clean_names()
+```
+
+
+```{r}
+# Define covariates of interest 
+colnames <- names(ecls_clean)
+
+# Classes of variables as defined in the NCES Codebook 
+id_vars <- colnames[str_detect(colnames, "^[sdtj][0-9].*_id$")]
+  
+ecls_clean %>%
+  select(-setdiff(colnames, "childid"))
+
+
+```
+
+
