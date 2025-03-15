@@ -4,10 +4,14 @@ output: html_document
 date: "2025-03-10"
 ---
 
-# Load and Setup 
+# ECLS-K 
 ```{r} 
 source("../../setup/external.R")
 output_path <- "../output/" 
+
+##########################
+# Set up
+##########################
 
 # Original K-8 Sample 
 ecls <- read_dta(file.path(external_path, "ecls/ECLSK_Kto8_child_STATA.dta"))
@@ -21,27 +25,609 @@ colnames <- sub("_r$", "", colnames(corrected_ecls))
 ecls_clean <- ecls %>%
   clean_names() %>%
   left_join(corrected_ecls, by = "childid") %>%
-  select(-setdiff(colnames, "childid"))
+  select(-setdiff(colnames, "childid"))  %>% # Get rid of incorrect thetas
+  select(where(~ !all(is.na(.) | . == -2))) # Omit Suppressed Columns
 
 # Base Year School 
 school <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_School_STATA.dta")) %>%
-  clean_names()
+  clean_names() %>%
+  select(where(~ !all(is.na(.) | . == -2)))
+
 teacher <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_Teacher_STATA.dta")) %>%
   clean_names()
+
+school
+table(school$k2infac)
+head(school)
+
+ecls_clean %>%
+  select(p7fipsst)
+
+table(ecls_clean$p7fipsst)
 ```
 
 
 ```{r}
-# Define covariates of interest 
+# Define covariates of interest
 colnames <- names(ecls_clean)
 
-# Classes of variables as defined in the NCES Codebook 
-id_vars <- colnames[str_detect(colnames, "^[sdtj][0-9].*_id$")]
-  
-ecls_clean %>%
-  select(-setdiff(colnames, "childid"))
+########################## 
+# 0. Define Variables 
+########################## 
 
+# 0.1 Standard Identification Variables
+id_vars <- colnames[str_detect(colnames, "^[sdtj][0-9].*_id$")]
+
+# 0.2 Important Identification Variables 
+patterns <- c("p1ageent", "p1agefrs", "p1hrsnow", "p1primnw", "p1center", "p1disabl", "p[0-9]htotal", "p[0-9]firkdg")
+
+child_vars <- colnames[str_detect(colnames, paste(patterns, collapse = "|"))]
+  
+# 0.3 Non-Cognitive Markers
+patterns <- c("^[ctp][0-9]social", "^[ctp][0-9]sadlon", "^[ctp][0-9]impuls", "^[ctp][0-9]interp", "^[ctp][0-9]extern", "^[ctp][0-9]scint", "^[c][0-9].*sdqext", "^[c][0-9].*sdqinr") # Attitude toward learning
+
+non_cog <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.4 Cognitive Markers 
+patterns <- c("^[c][0-9].*scord", "^[c][0-9].*scart", "^[c][0-9].*scsto", "^[c][0-9].*sctot", "^[c][0-9][r][42g].*", "^[c][0-9].*lifesc", "^[c][0-9].*physsc", "^[c][0-9].*earthsc", "^[c][0-9].*sdqrdc", "^[c][0-9].*sdqmtc",
+              "^[c][0-9][r][0-9]mscl", "^[c][0-9][r][0-9]rscl") 
+
+cog <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.5 Self-Perceived Non-Cognitive Markers
+patterns <- c("c[0-9]mthgd", "c[0-9]engbst", "c[0-9]angry", "c[0-9]likrd", "c[0-9]wrytst", "c[0-9]sad", "c[0-9]likmth", "c[0-9]wrywel", "c[0-9]wryfin", "c[0-9]enjrd", "c[0-9]wryhng", "c[0-9]grdeng", "c[0-9]ashame", "c[0-9]flgood", "c[0-9]nocntr", "c[0-9]luck")
+
+self_percep <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.6 Family Markers
+patterns <- c("w[0-9]hearly", "w[0-9]pared", "w[0-9]momar", "w[0-9]raceth", "w[0-9]white", "w[0-9]black", "w[0-9]momscr", "w[0-9]dadscr", "w[0-9]sesl", "w[0-9]sesq5", "w[0-9]povrty", "w[0-9]income", "w[0-9]inccat", "p5fsstat", "p[0-9]disabl", "p[0-9]hmemp", "p[0-9]hdemp", "p[0-9]momocc", "p[0-9]dadocc", "p[0-9]numsib", "p[0-9]hfamil", "p5hparent")
+
+family_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# Parental perception -- P#LRNRDG, P# LRNMTH -- how likely do you think your kdi is? 
+# Not sure how defined: "^[ctp][0-9]learn", "^[ctp][0-9]locus", "^[ctp][0-9]concpt", "^[ctp][0-9]contro",  "^[c][0-9].*sdqsbc" "^[c][0-9].*sdqprc",
+
+# 0.7 School Change Markers 
+patterns <- c("^fkch.*", "[r][0-9][r][0-9].*tchg", "[r][0-9][r][0-9].*schg")
+
+change_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.8 Administrative Classroom Markers 
+patterns <- c("[agm][0-9]pmin", "[agm][0-9]pblk", "[agm][0-9]plep", # Percentage of minorities 
+              "s[0-9]cmnity", "s[0-9]tnsion", "s[0-9]drugs", "s[0-9]gangs", "s[0-9]vlence", "s[0-9]crime", # Crime and Neighborhood Characteristics 
+              "s[0-9]pctrd", "s[0-9]pctmth", "s[0-9]chcare", "s[0-9]prntng", "s[0-9]ptamt", "s[0-9]rprtcd", "s[0-9]ptconf", "s[0-9]claspr", "s[0-9]gopta", "s[0-9]goal7", 
+# Programs, Support, Engagement
+              "s[0-9]lepsch", "s[0-9]lepknd", # LEP Kids
+              "[agmn][0-9]clsz", 
+              "s[0-9]kpupri", "s[0-9]ada", # Class Size
+              "b[0-9]lrnrea", "b[0-9]tchprn", "b[0-9]prctwr","s[0-9]pctrd", "s[0-9]pctmth", # Teacher perceptions
+              "d[0-9]yrstch", "d[0-9]gned", "b[0-9]age" # Teacher Credentials
+              )
+
+classroom_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.9 Other Classroom Markers 
+patterns <- c("c[0-9]safe", "c[0-9]grdyou", "c[0-9]grdpar", "c[0-9]desmth", "c[0-9]dessci", "c[0-9]tutorr", "c[0-9]tutorm")
+
+other_classroom_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+```
+
+
+```{r}
+all_selected_vars <- c(id_vars, child_vars, non_cog, cog, self_percep, family_vars, change_vars, classroom_vars, other_classroom_vars)
+
+# Create a data frame that categorizes the variables 
+variable_table <- data.frame(variable = all_selected_vars,
+                             category = c(rep("Standard Identification", length(id_vars)),
+                                         rep("Important Identification", length(child_vars)),
+                                         rep("Non-Cognitive Markers", length(non_cog)),
+                                         rep("Cognitive Markers", length(cog)),
+                                         rep("Self-Perceived Non-Cognitive Markers", length(self_percep)),
+                                         rep("Family Markers", length(family_vars)),
+                                         rep("School Change Markers", length(change_vars)),
+                                         rep("Administrative Classroom Markers", length(classroom_vars)),
+                                         rep("Other Classroom Markers", length(other_classroom_vars))))
+
+# View the table
+variable_table
+length(all_selected_vars)
+```
+
+# Important Variables 
+```{r}
+# Most important
+
+# C2RGRONR
 
 ```
+
+
+# ECLS 2011 
+```{r}
+##########################
+# Set up
+##########################
+
+ecls_new <- read_dta(file.path(external_path, "ecls_2011/ECLSK2011_K5PUF.dta"))
+save(ecls_new, file = file.path(external_path, "ecls_2011/raw_ecls_new.RData"))
+load(file.path(external_path, "ecls_2011/raw_ecls_new.RData"))
+
+ecls_new_clean <- ecls_new %>% 
+  clean_names()
+
+nrow(ecls_new)
+ecls_new_clean
+```
+
+
+```{r}
+selected_patterns <- c("p1ageent", "p1agefrs", "p1hrsnow", "p1primnw", "p1center", "p1disabl", "p1htotal", "w[0-9]raceth", "p1firkdg", "p[0-9]sadlon", "p[0-9]social", "p[0-9]impuls", "p[0-9]interp", "p[0-9]extern", "c7flgood", # Non-cognitive Skills 
+                      "c[0-9]r4mscl", "c[0-9]r4rscl", # Outcomes 
+                      "w[0-9]pared", "w[0-9]momscr", "w[0-9]dadscr", "w[0-9]povrty", "w[0-9]income", "w[0-9]sesl", 
+                      "w[0-9]momed", "w[0-9]daded")
+
+selected_vars <- all_selected_vars[
+  str_detect(all_selected_vars, paste(selected_patterns, collapse = "|"))
+]
+
+ecls_clean_selected <- ecls_clean %>%
+  select(all_of(selected_vars)) %>%
+  drop_na(c1r4mscl, w1pared)
+  
+covars <- setdiff(selected_vars, c("c5r4mscl", "w1pared", "c5r4rscl"))
+formula <- as.formula(paste("c5r4mscl ~ w1pared +", paste(covars, collapse = " + ")))
+
+model <- lm(formula, data = ecls_clean_selected)
+
+summary(model)
+
+model <- lm(c1r4mscl ~ w1pared + w1raceth + p1agefrs + w1momscr + w1dadscr + w1income, data = ecls_clean_selected)
+
+summary(model)
+
+##########################
+# 2. Regressions
+##########################
+
+coefs <- rep(0,7)
+patterns <- c("p1agefrs", "p1ageent", "w1raceth", "p1firkdg", "w1momscr", "w1dadscr", "w1pared", "w[0-9]sesl", "c[0-9]r4mscl", "w[0-9]momed", "w[0-9]daded")
+covars <- all_selected_vars[
+  str_detect(all_selected_vars, paste(patterns, collapse = "|"))
+]
+
+regress <- function(var, covars) {
+  formula <- as.formula(paste(var, "~", paste(covars, collapse = "+")))
+  model <- lm(formula, data = ecls_clean_selected)
+  return(coef(model)["p1agefrs"])
+}
+
+for (i in 1:7) {
+  vars <- paste0("c", i, "r4mscl")
+  coefs[i] <- regress(vars, covars)
+}
+
+coef_df <- data.frame(
+  index = 1:7, 
+  coef = coefs
+)
+
+ggplot(data = ecls_clean_selected %>%
+         select(w1momscr, c1r4mscl) %>%
+         group_by(w1momscr) %>%
+         summarize(mean_test = mean(c1r4mscl))) + 
+  geom_line(aes(x = w1momscr, y = mean_test)) + 
+  theme_minimal()
+
+ggplot(data = ecls_clean_selected %>%
+         select(w1momscr, w1dadscr) %>%
+         group_by(w1momscr) %>%
+         filter(w1momscr > 0 & w1dadscr > 0) %>%
+         summarize(
+           mean = mean(w1dadscr)
+         )) + 
+  geom_line(aes(x = w1momscr, y = mean)) + 
+  theme_minimal()
+
+ggplot(data = ecls_clean_selected %>%
+         select(w1momscr, w1sesl) %>%
+         group_by(w1momscr) %>%
+         summarize(
+           mean = mean(w1sesl)
+         )) + 
+  geom_line(aes(x = w1momscr, y = mean)) + 
+  theme_minimal()
+
+
+ggplot(data = ecls_clean %>%
+         group_by(w1momed) %>%
+         summarize(mean_test = mean(c1r4mscl, na.rm = T)) %>%
+         filter(w1momed > 0)) + 
+  geom_line(aes(x = w1momed, y = mean_test)) + 
+  theme_minimal()
+
+ggplot(data = ecls_clean %>%
+         group_by(w1daded) %>%
+         summarize(mean_test = mean(c1r4mscl, na.rm = T)) %>%
+         filter(w1daded > 0)) + 
+  geom_line(aes(x = w1daded, y = mean_test)) + 
+  theme_minimal()
+
+ggplot(data = ecls_clean %>%
+         group_by(w1momed) %>%
+         summarize(mean_test = mean(c1r4mscl, na.rm = T)) %>%
+         filter(w1momed > 0)) + 
+  geom_line(aes(x = w1momed, y = mean_test)) + 
+  theme_minimal()
+
+ggplot(data = ecls_clean %>%
+         group_by(w1momed) %>%
+         filter(w1momed > 0 & w1daded > 0) %>%
+         summarize(mean = mean(w1daded, na.rm = T))) + 
+  geom_line(aes(x = w1momed, y = mean)) + 
+  theme_minimal()
+
+ggplot(data = ecls_clean %>%
+         group_by(w1daded) %>%
+         filter(w1momed > 0 & w1daded > 0) %>%
+         summarize(mean = mean(w1momed, na.rm = T))) + 
+  geom_line(aes(x = w1daded, y = mean)) + 
+  theme_minimal()
+
+# "Dip" -- more wealthy men can afford 
+# Effect of family structure 
+
+model <- lm(c2r4mscl ~ w1pared + w1raceth + p1agefrs + w1momscr + w1dadscr + w1momed + w1daded + w1income, data = ecls_clean)
+summary(model)
+
+model <- lm(c3r4mscl ~ w1pared + w1raceth + p1agefrs + w1momscr + w1dadscr + w1momed + w1daded + w1sesl, data = ecls_clean)
+summary(model)
+
+yo <- ecls_clean %>%
+  select(c1r4mscl, c2r4mscl, c3r4mscl, w1raceth, w1momscr, w1dadscr, w1momed, w1daded, w1sesl) %>%
+  filter(w1daded == 3) %>%
+  mutate(
+    quantile = case_when(
+      w1sesl < quantile(w1sesl, 0.25) ~ 1, 
+      w1sesl < quantile(w1sesl, 0.25) & w1sesl > quantile(w1sesl, 0.5) ~ 2, 
+      w1sesl > quantile(w1sesl, 0.5) & w1sesl < quantile(w1sesl, 0.75) ~ 3, 
+      w1sesl > quantile(w1sesl, 0.75) ~ 4, 
+      TRUE ~ NA
+     )) %>% 
+  filter(w1momed > 0) %>%
+  group_by(w1momed, quantile) %>%
+  summarize(
+    mean1 = mean(c1r4mscl, na.rm = T), 
+    mean2 = mean(c2r4mscl, na.rm = T), 
+    mean3 = mean(c3r4mscl, na.rm = T)
+  )
+
+ggplot(data = yo, aes(x = w1momed)) + 
+  geom_line(aes(y = mean1)) +
+  geom_line(aes(y = mean2)) + 
+  facet_wrap(~ quantile) +
+  theme_minimal()
+
+# Mom ed VERSUS Mom prestige 
+
+yo <- ecls_clean %>%
+  select(c1r4mscl, c2r4mscl, c3r4mscl, w1raceth, w1momscr, w1dadscr, w1momed, w1daded, w1sesl) %>%
+  filter(w1momed == 3) %>%
+  mutate(
+    quantile = case_when(
+      w1sesl < quantile(w1sesl, 0.25) ~ 1, 
+      w1sesl < quantile(w1sesl, 0.25) & w1sesl > quantile(w1sesl, 0.5) ~ 2, 
+      w1sesl > quantile(w1sesl, 0.5) & w1sesl < quantile(w1sesl, 0.75) ~ 3, 
+      w1sesl > quantile(w1sesl, 0.75) ~ 4, 
+      TRUE ~ NA
+     )) %>% 
+  filter(w1daded > 0) %>%
+  group_by(w1daded, quantile) %>%
+  summarize(
+    mean1 = mean(c1r4mscl, na.rm = T), 
+    mean2 = mean(c2r4mscl, na.rm = T), 
+    mean3 = mean(c3r4mscl, na.rm = T)
+  )
+
+ggplot(data = yo, aes(x = w1daded)) + 
+  geom_line(aes(y = mean1)) +
+  geom_line(aes(y = mean2)) + 
+  facet_wrap(~ quantile) +
+  theme_minimal()
+
+summary(ecls_clean$w1sesl)
+
+yo <- ecls_clean %>%
+         select(w1momed, w3momed, w5momed, w8momed) %>%
+         pivot_longer(
+           cols = ends_with("momed"), 
+           names_to = "grade",
+           values_to = "momed"
+         ) %>%
+         mutate(grade = str_extract(grade, "[0-9]")) %>%
+         group_by(grade) %>%
+         summarize(
+           mean = mean(momed, na.rm = T)
+         ) %>%
+  mutate(grade = as.numeric(grade))
+
+
+yo <- ecls_clean %>%
+         select(w1daded, w3daded, w5daded, w8daded) %>%
+         pivot_longer(
+           cols = ends_with("daded"), 
+           names_to = "grade",
+           values_to = "daded"
+         ) %>%
+         mutate(grade = str_extract(grade, "[0-9]")) %>%
+         group_by(grade) %>%
+         summarize(
+           mean = mean(daded, na.rm = T)
+         ) %>%
+  mutate(grade = as.numeric(grade))
+
+ggplot() + 
+  geom_line(aes(x = grade, y = mean), data = yo) + 
+  theme_minimal()
+
+```
+
+
+# Change in parental income? 
+```{r}
+patterns <- c("c[0-9]r4mscl", "w[0-9]momscr", "w[0-9]dadscr", "w[0-9]povrty", "w1pared", "w[0-9]sesl", "c[0-9]enjrd", "c[0-9]wryhng", "c[0-9]grdeng", "c[0-9]ashame", "c[0-9]flgood", "c[0-9]nocntr", "c[0-9]mthgd", "^[ctp][0-9]social", "^[ctp][0-9]sadlon", "^[ctp][0-9]impuls", "^[ctp][0-9]interp", "^[ctp][0-9]extern",  "c[0-9]r4rscl", "w[0-9]raceth")
+covars <- all_selected_vars[
+  str_detect(all_selected_vars, paste(patterns, collapse = "|"))
+]
+
+ecls_clean_change <- ecls_clean %>%
+  select(covars) %>%
+  #drop_na(c("w1dadscr", "w3dadscr", "w5dadscr", "w8dadscr")) %>%
+  #mutate(delta_31 = w3dadscr - w1dadscr,
+         #delta_35 = w5dadscr - w3dadscr,
+         #delta_85 = w8dadscr - w5dadscr, 
+         #delta_81 = w8dadscr - w1dadscr) %>%
+  mutate(
+    income_delta_31 = w3sesl - w1sesl, 
+    income_delta_53 = w5sesl - w3sesl, 
+    income_delta_85 = w8sesl - w5sesl, 
+    income_delta_81 = w8sesl - w1sesl
+  ) %>%
+  mutate(
+    test_delta_31 = c3r4mscl - c1r4mscl, 
+    test_delta_53 = c5r4mscl - c3r4mscl, 
+    test_delta_75 = c7r4mscl - c5r4mscl, 
+    test_delta_71 = c7r4mscl - c1r4mscl
+  )
+  
+model <- lm(c5r4mscl ~ income_delta_53 + w1raceth + w1sesl + w3sesl + w1pared + w1dadscr + w1momscr + c1r4mscl + c2r4mscl + c3r4mscl, data = ecls_clean_change)
+summary(model)
+
+ecls_clean_change <- ecls_clean_change %>%
+  filter(w1povrty == 2 & w3povrty == 1 | w1povrty == 1 & w3povrty == 1)
+
+model <- lm(test_delta_75 ~ poverty_delta_31 + w1povrty + w1raceth + w1pared + w1dadscr + w1momscr + w3dadscr + w3momscr + c1r4mscl, data = ecls_clean_change)
+summary(model)
+
+
+
+
+model <- lm(c7nocntr ~ poverty_delta_31 + w1povrty + w1pared + w1dadscr + w1momscr + c1r4mscl + c2r4mscl + t2extern, data = ecls_clean_change)
+
+summary(model)
+
+ecls_clean_long <- ecls_clean_change %>%
+  filter(w1pared == 5) %>%
+  select(w1pared, income_delta_53, c1r4mscl, c2r4mscl, c3r4mscl, c4r4mscl, c5r4mscl, c6r4mscl, c7r4mscl) %>%
+  mutate(effect = case_when(
+    income_delta_53 < -0.75 ~ 1,  
+    income_delta_53 > -0.75 ~ 2, 
+    TRUE ~ NA )) %>%
+  select(-income_delta_53) %>%
+  pivot_longer(cols = ends_with("mscl"), 
+               names_to = "grade", 
+               values_to = "score") %>%
+  mutate(grade = str_extract(grade, "[0-9]")) %>%
+  mutate(grade = as.numeric(grade)) %>%
+  group_by(grade, effect, w1pared) %>%
+  summarize(
+    score = mean(score, na.rm = T)
+  ) %>%
+  drop_na()
+
+ecls_clean_long 
+
+ggplot(ecls_clean_long, aes(x = grade, y = score, color = factor(effect))) + 
+  geom_line() + 
+  facet_wrap(~ w1pared) + 
+  theme_minimal()
+
+table(ecls_clean_change$w1povrty)
+
+
+str(ecls_clean_long)
+```
+
+
+```{r}
+patterns <- c("w[0-9]sesl", "w[0-9]pared", "c[0-9]r4mscl", "w1raceth")
+covars <- all_selected_vars[
+  str_detect(all_selected_vars, paste(patterns, collapse = "|"))
+] 
+
+
+ecls_clean_improved <- ecls_clean %>%
+  select(covars) %>%
+  mutate(status_delta = case_when(
+    w5sesl - w3sesl > 1 ~ 1, 
+    w5sesl - w3sesl < -1 ~ 2, 
+    w5sesl - w3sesl >= -1 & w5sesl - w3sesl <= 0 ~ 3, 
+    w5sesl - w3sesl <= 1 & w5sesl - w3sesl > 0 ~ 4)) %>%
+  pivot_longer(
+    cols = ends_with("mscl"), 
+    names_to = "grade", 
+    values_to = "score" 
+  ) %>%
+  drop_na(status_delta) %>%
+  mutate(grade = as.numeric(str_extract(grade, "[0-9]"))) %>%
+  group_by(grade, status_delta) %>%
+  summarize(
+    score = mean(score, na.rm = T)
+  )
+
+ggplot(data = ecls_clean_improved, aes(x = grade, y = score, color = factor(status_delta))) + 
+  geom_line() + 
+  theme_minimal()
+
+```
+
+
+
+
+```{r}
+
+patterns <- c("c[0-9]r4mscl", "w[0-9]momscr", "w[0-9]dadscr", "w[0-9]povrty", "w1pared")
+covars <- all_selected_vars[
+  str_detect(all_selected_vars, paste(patterns, collapse = "|"))
+]
+
+yo <- ecls_clean %>%
+  select(covars) %>%
+  drop_na(c("w1dadscr", "w3dadscr", "w5dadscr", "w8dadscr")) %>%
+  mutate(delta_31 = w3dadscr - w1dadscr,
+         delta_35 = w5dadscr - w5dadscr,
+         delta_85 = w8dadscr - w5dadscr, 
+         delta_81 = w8dadscr - w1dadscr) %>%
+  mutate(
+    test_delta_31 = c3r4mscl - c1r4mscl, 
+    test_delta_53 = c5r4mscl - c3r4mscl, 
+    test_delta_85 = c7r4mscl - c5r4mscl, 
+    test_delta_81 = c7r4mscl - c1r4mscl
+  )
+
+model <- lm(test_delta_81 ~ delta_81 + w1pared + c1r4mscl + w1dadscr, data = yo)
+
+model
+
+
+ yo %>% 
+  filter(delta_81 < -10 & w1dadscr > 60) %>%
+   pivot_longer(
+     cols = ends_with("r4mscl"), 
+     names_to = "test",
+     values_to = "score"
+  )
+
+  geom_line(aes(x = seq_along(1:7), y = score), )
+
+yo %>%
+  filter(delta_81 == 0) 
+
+  table(ecls_clean_selected$w1dadscr)
+  
+  
+hist(ecls_clean$w1momed)
+hist(ecls_clean$w1daded)
+yo
+```
+
+
+
+```{R}
+# Head Start funding stimulus? 
+# Also the distinction between soft cognitive skills (attention) and soft socioemotional skills 
+# Go to another dataset 
+# 5-6 Family Variables, 5-6 School Variables 
+# Cognitive Objective, Cognitive Subjective, Non Cognitive Objective, Non Cognitive Subjective 
+# Check Authors Websites to Check Code 
+
+# Changes in family income? But that's not exogenous... 
+```
+
+
+
+```{R}
+yo <- ecls_clean %>%
+  select(c1r4mscl, p1ageent) %>%
+  group_by(p1ageent) %>%
+  summarize(
+    mean = mean(c1r4mscl, na.rm = T)
+  )
+
+income_delta_53 + w1raceth + w1sesl + w3sesl + w1pared + w1dadscr + w1momscr + c1r4mscl + c2r4mscl + c3r4mscl
+
+ggplot() + 
+  geom_line(aes(x = p1ageent, y = mean), data = yo)
+
+DOBMM
+DOBYY
+
+ecls_clean$w1raceth <- as.factor(ecls_clean$w1raceth)
+
+model <- lm(c5r4mscl ~ p1ageent + p1sameag + p5sameag + p4worry + w1black + w1asian + w1white + w1sesl + w1momed + w1daded + w1dadscr + w1momscr + c3r4mscl + c4r4mscl + c3r4rscl + c4r4rscl, data = ecls_clean)
+summary(model)
+
+model <- lm(c7r4mscl~ p1ageent + p1sameag + p5sameag + p4worry + w1black + w1asian + w1white + w1sesl + w5sesl + w1momed + w1daded + w1dadscr + w1momscr + c3r4mscl + c4r4mscl + c3r4rscl + c4r4rscl, data = ecls_clean)
+summary(model)
+
+model <- lm(p4worry~ p1sameag + p5sameag + w1black + w1asian + w1white + w1sesl + w5sesl + w1momed + w1daded + w1dadscr + w1momscr + c3r4mscl + c4r4mscl + c3r4rscl + c4r4rscl, data = ecls_clean)
+
+summary(ecls_clean$p4worry)
+
+names(ecls_clean)
+summary(model)
+
+# P4WORRY
+
+ecls_clean_white <- ecls_clean %>%
+  filter(w1white == 1) %>%
+  select(p4worry, p5sameag, w5sesl, w5pared, p4learn)
+
+ecls_clean_asian <- ecls_clean %>%
+  filter(w1asian == 1) %>%
+  select(p4worry, p5sameag, w5sesl, w5pared, p4learn)
+
+ecls_clean_black <- ecls_clean %>%
+  filter(w1black == 1) %>%
+  select(p4worry, p5sameag, w5sesl, w5pared, p4learn)
+
+hist(ecls_clean_black$p4learn)
+hist(ecls_clean_asian$p4learn)
+hist(ecls_clean_white$p4learn)
+
+model <- lm(c5r4mscl~ p1sameag + p5sameag + p4learn + p4contro + p4social + p4sadlon + w1black + w1asian + w1white + w1sesl + w5sesl + w1momed + w1daded + w1dadscr + w1momscr + c3r4mscl + c4r4mscl + c3r4rscl + c4r4rscl, data = ecls_clean)
+summary(model)
+
+model <- lm(p4sadlon ~ p1sameag + p5sameag + p4worry + p4learn + p4contro + p4social + w1black + w1asian + w1white + w1sesl + w5sesl + w1momed + w1daded + w1dadscr + w1momscr + c3r4mscl + c4r4mscl + c3r4rscl + c4r4rscl, data = ecls_clean)
+summary(model)
+
+model <- lm(c6r4mscl ~ p1sameag + p5sameag + p4learn + p4contro + p4social + w1black + w1asian + w1white + w1sesl + w5sesl + w1momed + w1daded + w1dadscr + w1momscr + c3r4mscl + c4r4mscl + c3r4rscl + c4r4rscl + c5r4rscl, data = ecls_clean)
+summary(model)
+
+hist(ecls_clean$p1sameag)
+hist(ecls_clean$p5sameag)
+```
+
+
+
+
+
+
+
+
+
 
 

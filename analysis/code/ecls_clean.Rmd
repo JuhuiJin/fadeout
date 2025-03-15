@@ -1,0 +1,290 @@
+---
+title: "ecls"
+output: html_document
+date: "2025-03-10"
+---
+
+# ECLS-K 
+```{r} 
+source("../../setup/external.R")
+output_path <- "../output/" 
+
+##########################
+# Set up
+##########################
+
+# Original K-8 Sample 
+ecls <- read_dta(file.path(external_path, "ecls/ECLSK_Kto8_child_STATA.dta"))
+save(ecls, file = file.path(external_path, "ecls/raw_ecls.RData"))
+load(file.path(external_path, "ecls/raw_ecls.RData"))
+
+# Corrected ECLS (Fix incorrect thetas)
+corrected_ecls <- read_dta(file.path(external_path, "ecls/eclsk_theta_errata.dta"))
+colnames <- sub("_r$", "", colnames(corrected_ecls))
+
+ecls_clean <- ecls %>%
+  clean_names() %>%
+  left_join(corrected_ecls, by = "childid") %>%
+  select(-setdiff(colnames, "childid"))  %>% # Get rid of incorrect thetas
+  select(where(~ !all(is.na(.) | . == -2))) # Omit Suppressed Columns
+
+# Base Year School 
+school <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_School_STATA.dta")) %>%
+  clean_names() %>%
+  select(where(~ !all(is.na(.) | . == -2)))
+
+teacher <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_Teacher_STATA.dta")) %>%
+  clean_names()
+
+school
+table(school$k2infac)
+head(school)
+
+ecls_clean %>%
+  select(p7fipsst)
+
+table(ecls_clean$p7fipsst)
+```
+
+
+```{r}
+# Define covariates of interest
+colnames <- names(ecls_clean)
+
+########################## 
+# 0. Define Variables 
+########################## 
+
+# 0.1 Standard Identification Variables
+id_vars <- colnames[str_detect(colnames, "^[sdtj][0-9].*_id$")]
+
+# 0.2 Important Identification Variables 
+patterns <- c("p1ageent", "p1agefrs", "p1hrsnow", "p1primnw", "p1center", "p1disabl", "p[0-9]htotal", "p[0-9]firkdg")
+
+child_vars <- colnames[str_detect(colnames, paste(patterns, collapse = "|"))]
+  
+# 0.3 Non-Cognitive Markers
+patterns <- c("^[ctp][0-9]social", "^[ctp][0-9]sadlon", "^[ctp][0-9]impuls", "^[ctp][0-9]interp", "^[ctp][0-9]extern", "^[ctp][0-9]scint", "^[c][0-9].*sdqext", "^[c][0-9].*sdqinr") # Attitude toward learning
+
+non_cog <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.4 Cognitive Markers 
+patterns <- c("^[c][0-9].*scord", "^[c][0-9].*scart", "^[c][0-9].*scsto", "^[c][0-9].*sctot", "^[c][0-9][r][42g].*", "^[c][0-9].*lifesc", "^[c][0-9].*physsc", "^[c][0-9].*earthsc", "^[c][0-9].*sdqrdc", "^[c][0-9].*sdqmtc",
+              "^[c][0-9][r][0-9]mscl", "^[c][0-9][r][0-9]rscl") 
+
+cog <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.5 Self-Perceived Non-Cognitive Markers
+patterns <- c("c[0-9]mthgd", "c[0-9]engbst", "c[0-9]angry", "c[0-9]likrd", "c[0-9]wrytst", "c[0-9]sad", "c[0-9]likmth", "c[0-9]wrywel", "c[0-9]wryfin", "c[0-9]enjrd", "c[0-9]wryhng", "c[0-9]grdeng", "c[0-9]ashame", "c[0-9]flgood", "c[0-9]nocntr", "c[0-9]luck")
+
+self_percep <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.6 Family Markers
+patterns <- c("w[0-9]hearly", "w[0-9]pared", "w[0-9]momar", "w[0-9]raceth", "w[0-9]white", "w[0-9]black", "w[0-9]momscr", "w[0-9]dadscr", "w[0-9]sesl", "w[0-9]sesq5", "w[0-9]povrty", "w[0-9]income", "w[0-9]inccat", "p5fsstat", "p[0-9]disabl", "p[0-9]hmemp", "p[0-9]hdemp", "p[0-9]momocc", "p[0-9]dadocc", "p[0-9]numsib", "p[0-9]hfamil", "p5hparent")
+
+family_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# Parental perception -- P#LRNRDG, P# LRNMTH -- how likely do you think your kdi is? 
+# Not sure how defined: "^[ctp][0-9]learn", "^[ctp][0-9]locus", "^[ctp][0-9]concpt", "^[ctp][0-9]contro",  "^[c][0-9].*sdqsbc" "^[c][0-9].*sdqprc",
+
+# 0.7 School Change Markers 
+patterns <- c("^fkch.*", "[r][0-9][r][0-9].*tchg", "[r][0-9][r][0-9].*schg")
+
+change_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.8 Administrative Classroom Markers 
+patterns <- c("[agm][0-9]pmin", "[agm][0-9]pblk", "[agm][0-9]plep", # Percentage of minorities 
+              "s[0-9]cmnity", "s[0-9]tnsion", "s[0-9]drugs", "s[0-9]gangs", "s[0-9]vlence", "s[0-9]crime", # Crime and Neighborhood Characteristics 
+              "s[0-9]pctrd", "s[0-9]pctmth", "s[0-9]chcare", "s[0-9]prntng", "s[0-9]ptamt", "s[0-9]rprtcd", "s[0-9]ptconf", "s[0-9]claspr", "s[0-9]gopta", "s[0-9]goal7", 
+# Programs, Support, Engagement
+              "s[0-9]lepsch", "s[0-9]lepknd", # LEP Kids
+              "[agmn][0-9]clsz", 
+              "s[0-9]kpupri", "s[0-9]ada", # Class Size
+              "b[0-9]lrnrea", "b[0-9]tchprn", "b[0-9]prctwr","s[0-9]pctrd", "s[0-9]pctmth", # Teacher perceptions
+              "d[0-9]yrstch", "d[0-9]gned", "b[0-9]age" # Teacher Credentials
+              )
+
+classroom_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.9 Other Classroom Markers 
+patterns <- c("c[0-9]safe", "c[0-9]grdyou", "c[0-9]grdpar", "c[0-9]desmth", "c[0-9]dessci", "c[0-9]tutorr", "c[0-9]tutorm")
+
+other_classroom_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+```
+
+
+```{r}
+all_selected_vars <- c(id_vars, child_vars, non_cog, cog, self_percep, family_vars, change_vars, classroom_vars, other_classroom_vars)
+
+# Create a data frame that categorizes the variables 
+variable_table <- data.frame(variable = all_selected_vars,
+                             category = c(rep("Standard Identification", length(id_vars)),
+                                         rep("Important Identification", length(child_vars)),
+                                         rep("Non-Cognitive Markers", length(non_cog)),
+                                         rep("Cognitive Markers", length(cog)),
+                                         rep("Self-Perceived Non-Cognitive Markers", length(self_percep)),
+                                         rep("Family Markers", length(family_vars)),
+                                         rep("School Change Markers", length(change_vars)),
+                                         rep("Administrative Classroom Markers", length(classroom_vars)),
+                                         rep("Other Classroom Markers", length(other_classroom_vars))))
+
+# View the table
+variable_table
+length(all_selected_vars)
+```
+
+
+# ECLS 2011 
+```{r}
+##########################
+# Set up
+##########################
+
+ecls_new <- read_dta(file.path(external_path, "ecls_2011/ECLSK2011_K5PUF.dta"))
+save(ecls_new, file = file.path(external_path, "ecls_2011/raw_ecls_new.RData"))
+load(file.path(external_path, "ecls_2011/raw_ecls_new.RData"))
+
+ecls_new_clean <- ecls_new %>% 
+  clean_names()
+
+nrow(ecls_new)
+ecls_new_clean
+```
+
+
+# Impact of Parent's Positive Distortionary Beliefs
+```{r}
+ecls_clean_improved <- ecls_clean %>%
+  filter(t2learn >=0 & p2learn >=0 & p1sameag >= 0 & c7ashame >= 0 & p5sameag >= 0 & p4sameag >= 0 & c7wryfin >=0) 
+  
+ggplot(data = ecls_clean_improved %>%
+         group_by(p2learn) %>%
+         summarize(mean = mean(t2learn, na.rm = T), 
+                   median = quantile(t2learn, 0.5, na.rm = T))) + 
+  geom_line(aes(x = p2learn, y = mean, color = "mean t2learn")) + 
+  geom_line(aes(x = p2learn, y = median, color = "median t2learn")) + 
+  theme_minimal()
+
+hist(ecls_clean_improved$t2learn, breaks = seq(min(ecls_clean_improved$t2learn, na.rm = TRUE), 
+                                               max(ecls_clean_improved$t2learn, na.rm = TRUE), 
+                                               by = 0.05))
+hist(ecls_clean_improved$p2learn, breaks = seq(min(ecls_clean_improved$p2learn, na.rm = TRUE), 
+                                               max(ecls_clean_improved$p2learn, na.rm = TRUE), 
+                                               by = 0.05))
+hist(ecls_clean_improved$p1sameag)
+
+model <- lm(p2learn ~ p1lookfo + p2impuls + p2social + p2sadlon, data = ecls_clean_improved)
+summary(model)
+
+hist(ecls_clean_improved$p2learn_demean)
+hist(ecls_clean_improved$p2learn_demean)
+
+model <- lm(p2learn ~ t2learn + c2r4mscl + p1lookfo + p2impuls + p2social + p2sadlon, data = ecls_clean_improved)
+summary(model)
+
+model <- lm(p2learn ~ c2r4mscl, data = ecls_clean_improved)
+summary(model)
+
+ggplot(data = ecls_clean_improved %>%
+         group_by(p2learn) %>%
+         summarize(mean = mean(c2r4mscl, na.rm = T))) + 
+  geom_line(aes(x = p2learn, y = mean, color = "mean t2learn")) + 
+  theme_minimal()
+
+ggplot(data = ecls_clean_improved %>%
+         group_by(p1sameag) %>%
+         summarize(mean = mean(c7wryfin, na.rm = T), 
+                   median = quantile(c7wryfin, 0.5, na.rm = T))) + 
+  geom_line(aes(x = p1sameag, y = mean, color = "mean t2learn")) + 
+  geom_line(aes(x = p1sameag, y = median, color = "mean t2learn")) + 
+  theme_minimal()
+
+ggplot(data = ecls_clean_improved %>%
+         group_by(t2learn) %>%
+         summarize(mean = mean(c7r4mscl, na.rm = T), 
+                   median = quantile(c7r4mscl, 0.5, na.rm = T))) + 
+  geom_line(aes(x = t2learn, y = mean, color = "mean t2learn")) + 
+  geom_line(aes(x = t2learn, y = median, color = "mean t2learn")) + 
+  theme_minimal()
+
+ggplot(data = ecls_clean_improved %>%
+         group_by(c7wryfin) %>%
+         summarize(mean = mean(c7r4mscl, na.rm = T), 
+                   median = quantile(c7r4mscl, 0.5, na.rm = T))) + 
+  geom_line(aes(x = c7wryfin, y = mean, color = "mean t2learn")) + 
+  geom_line(aes(x = c7wryfin, y = median, color = "mean t2learn")) + 
+  theme_minimal()
+
+
+# both teacher and parental beliefs are 
+
+yo <- ecls_clean_improved %>%
+  filter(c4r4mscl <= quantile(c4r4mscl, 0.10, na.rm = T)) %>%
+  group_by(p4sameag) %>%
+  summarize(
+    mean = mean(c5r4mscl, na.rm = T), 
+    mean_before = mean(c4r4mscl, na.rm = T)
+  )
+
+ggplot(data = yo) + 
+  geom_line(aes(x = p4sameag, y = mean, color = "mean_now")) + 
+  geom_line(aes(x = p4sameag, y = mean_before, color = "mean_before")) + 
+  theme_minimal()
+
+
+yo <- ecls_clean_improved %>%
+  filter(c5r4mscl <= quantile(c5r4mscl, 0.10, na.rm = T)) %>%
+  group_by(p5sameag) %>%
+  summarize(
+    mean = mean(c7ashame, na.rm = T)
+  )
+
+ggplot(data = yo) + 
+  geom_line(aes(x = p5sameag, y = mean, color = "mean_now")) + 
+  #geom_line(aes(x = p5sameag, y = mean_before, color = "mean_before")) + 
+  theme_minimal()
+
+
+```
+
+
+```{r}
+ggplot(data = ecls_clean %>% 
+         group_by(p1ageent) %>%
+         filter(p1ageent > 50) %>%
+         summarize(
+           mean = mean(c1r4mscl, na.rm = T)
+         )) + 
+  geom_line(aes(x = p1ageent, y = mean))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
