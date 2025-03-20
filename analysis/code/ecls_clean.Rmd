@@ -7,7 +7,7 @@ date: "2025-03-10"
 # ECLS-K 
 ```{r} 
 source("../../setup/external.R")
-output_path <- "../output/" 
+output_path <- "../output/"
 
 ##########################
 # Set up
@@ -26,127 +26,525 @@ ecls_clean <- ecls %>%
   clean_names() %>%
   left_join(corrected_ecls, by = "childid") %>%
   select(-setdiff(colnames, "childid"))  %>% # Get rid of incorrect thetas
-  select(where(~ !all(is.na(.) | . == -2))) # Omit Suppressed Columns
+  select(where(~ !all(is.na(.) | . == -2 | . == -9))) %>% # Omit Suppressed Columns
+  mutate( 
+    # Factorize and NA Demographic Variables 
+    p1ageent = if_else(p1ageent <= 0, NA, p1ageent), 
+    across(c(p1hfamil, p2hfamil, p4hfamil, p5hfamil, p6hfamil, p7hfamil), as.factor), 
+    across(
+      c(p1hmemp, p4hmemp, p5hmemp, p6hmemp, p7hmemp, # Mom Emp
+        p1hdemp, p4hdemp, p5hdemp, p6hdemp, p7hdemp, # Dad Emp
+        wkdaded, w1daded, w3daded, w5daded, w8daded, 
+        wkmomed, w1momed, w3momed, w5momed, w8momed,
+        wkraceth, w1raceth), 
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ), 
+    across(c(wkraceth, w1raceth, w1povrty, w3povrty, w5povrty, w8povrty, wkdaded, w1daded, w3daded, w5daded, w8daded,wkmomed, w1momed, w3momed, w5momed, w8momed), as.factor)
+  )
 
 # Base Year School 
 school <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_School_STATA.dta")) %>%
   clean_names() %>%
-  select(where(~ !all(is.na(.) | . == -2)))
+  select(where(~ !all(is.na(.) | . == -2 | . == -9)))
 
 teacher <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_Teacher_STATA.dta")) %>%
   clean_names()
+```
 
-school
-table(school$k2infac)
-head(school)
+# Teacher Race
+```{r}
+ecls_clean <- ecls_clean %>%
+  mutate(
+    b1raceth = case_when(
+      b1race5 == 1 ~ 1,
+      b1race3 == 1 ~ 2,
+      b1race2 == 1 ~ 5,
+      b1race1 == 1 ~ 7
+    )) %>%
+  mutate(
+    race_match_k = as.factor(
+      b1raceth == w1raceth | (b1raceth == 1) & (w1raceth == 3 | w1raceth == 4)
+      )
+  ) 
+```
+
+# Calculate School Means 
+```{r}
+calculate_school_means <- function(data, i, score, type) {
+  if (i == 3) {
+    s_id <- paste0("s", 4, "_id")
+  }
+  else{
+    s_id <- paste0("s", i, "_id")
+  }
+  
+  sch_mean <- paste0("sch_", type, "_mean_", i)
+  
+  data <- data %>%
+    group_by(!!sym(s_id)) %>%
+    mutate(
+      not_na := n() - sum(is.na(!!sym(score))),
+      !!sym(sch_mean) := if_else(not_na > 1, (sum(!!sym(score), na.rm = T) - !!sym(score)) / (not_na-1), NA_real_)
+    ) %>%
+    ungroup()
+  
+  return(data)
+}
+```
+
+
+# Impact of Parent and Teacher's Positive Distortionary Beliefs
+```{r}
+for (i in 1:7) {
+  score <- paste0("c", i, "r4mscl") 
+  ecls_clean <- calculate_school_means(ecls_clean, i, score, "math")
+  
+  score <- paste0("c", i, "r4rscl") 
+  ecls_clean <- calculate_school_means(ecls_clean, i, score, "rdg")
+}
+
+for (i in c(1,2,4,5,6)) {
+  score <- paste0("t", i, "interp")
+  ecls_clean <- calculate_school_means(ecls_clean, i, score, "social")
+  
+  score <- paste0("t", i, "learn")
+  ecls_clean <- calculate_school_means(ecls_clean, i, score, "learn")
+}
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    delta_12 = c2r4mscl - c1r4mscl, 
+    delta_23 = c3r4mscl - c2r4mscl, 
+    delta_34 = c4r4mscl - c3r4mscl, 
+    delta_45 = c5r4mscl - c4r4mscl, 
+    delta_56 = c6r4mscl - c5r4mscl, 
+    delta_67 = c7r4mscl - c6r4mscl
+  )
+
+for (i in 1:6) {
+  ecls_clean <- calculate_school_means(ecls_clean, i, "p1ageent", "ageent")
+  
+  score <- paste0("delta_", i, i+1)
+  ecls_clean <- calculate_school_means(ecls_clean, i, score, score)
+} 
+```
+
+
+# Age of Entry Instrument 
+```{r}
+# Good Instrument
+plot <- ecls_clean %>%
+  filter(s2yyfive == 1996 | s2yyfive == 1997 | s2yyfive == 1998 | s2yyfive == 1999) %>%
+  mutate(
+    date = as.Date(paste(s2yyfive, s2mmfive, "15", sep = "-"))
+  ) %>%
+  group_by(date) %>%
+  summarize(
+    mean_ = mean(p1ageent, na.rm = T)
+  ) %>%
+  ggplot(aes(x = date, y = mean_)) + 
+  geom_line() + 
+  labs(
+    x = "Date by which child must turn five", 
+    y = "Mean Kindergarten Entry Age (Months)", 
+    title = "Kindergarten Age Rules and Entry Age",
+    subtitle = "for entering class of 1998-1999"
+  ) + 
+  theme_minimal()
+
+print(plot)
+ggsave(file.path(output_path, "kindergarten_entry_age.png"), plot = plot, width = 8, height = 5, dpi = 300, bg = "white")
+
+# Verifying that the 1999 entries are basically bogus past 3
+# How to justify this measurement error? 
+ecls_clean %>%
+  filter(s2yyfive == 1999 & s2mmfive >= 1) %>%
+  filter(p1ageent <= 50) %>%
+  select(s2mmfive, s2yyfive, p1ageent, s1_id)
 
 ecls_clean %>%
-  select(p7fipsst)
-
-table(ecls_clean$p7fipsst)
+  filter(s2yyfive == 1999 & s2mmfive >= 5) %>%
+  select(s2mmfive, p1ageent) %>%
+  filter(p1ageent <= 56)
+  
 ```
 
 
+
+
+# RD of Students just over the threshold 
 ```{r}
-# Define covariates of interest
+ecls_clean %>%
+  filter(p1ageent >= 0) %>%
+  group_by(s2mmfive) 
+
+ecls_clean %>%
+  select("dobmm", "dobdd", "dobyy", "p1firkdg", "s2mmfive", "s2ddfive", "s2yyfive", "p1ageent")
+
+jk <- ecls_clean %>%
+  mutate(
+    before = case_when(
+      dobmm >= 7 & dobmm <= s2mmfive & dobdd <= s2ddfive ~ 1, 
+      dobmm == s2mmfive & dobdd >= s2ddfive | dobmm > s2mmfive ~ 0, 
+      dobmm <= 7 ~ 7,
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  mutate(
+    dob_numeric = dobmm + (dobdd / 12)
+  ) 
+
+# Check balance in kids before and after cutoff 
+jk %>%
+  group_by(before) %>%
+  summarize(
+    mean_ageent = mean(p1ageent, na.rm = T), 
+    med_ageent = quantile(p1ageent, 0.5, na.rm = T), 
+    mean_incomek = mean(wkincome, na.rm = T), 
+    mean_income1 = mean(w1income, na.rm = T), 
+    mean_dadscr = mean(w1dadscr, na.rm = T), 
+    mean_momscr = mean(w1momscr, na.rm = T), 
+    mean_povrty = mean(as.numeric(w1povrty), na.rm = T),
+    mean_school_math = mean(sch_math_mean_1, na.rm = T), 
+    mean_daded = mean(as.numeric(w1daded), na.rm = T), 
+    mean_momed = mean(as.numeric(w1momed), na.rm = T), 
+    mean_math_1 = mean(c1r4mscl, na.rm = T),
+    n = n()
+  )
+
+# The difference-in-means gap between older and younger children shrinks by 8th grade. 
+# Fade-out explained by specific skills / item level measures? 
+
+sum(is.na(ecls_clean$dobyy))
+
+
+# Entry Rules are a
+ecls_clean %>%
+  filter(s2mmfive >= 0) %>%
+  filter(p1ageent >= 0) %>%
+  filter(!is.na(s1_id) & !is.na(s4_id)) %>%
+  filter(s2yyfive == 1998) %>%
+  group_by(s2mmfive) %>%
+  summarize(
+    mean = mean(p1ageent, na.rm = T), 
+    n = n()
+  ) %>%
+  ggplot(aes(x = s2mmfive, y = mean)) + 
+  geom_line() + 
+  theme_minimal()
+
+# As they should be, birthdates are basically random 
+print(jk)
+
+# Check if you have differential paper 
+
+date = as.Date(paste(s2yyfive, s2mmfive, "01", sep = "-"))
+head(ecls)
+
+
+table(ecls_clean$s2yyfive)
+
+ecls_clean %>%
+  filter(s2yyfive == 1999) %>%
+  summarize(
+    n = n_distinct(s1_id)
+  )
+```
+
+
+# Using School's Required Entry rules as an instrument 
+```{r}
+ecls_clean %>%
+  select(matches("five"))
+
+summary(ecls_clean$s2mmfive)
+
+table(ecls_clean$s2mmfive)
+
+jk <- ecls_clean %>%
+  filter(s2mmfive >= 0) %>%
+  filter(p1ageent >= 0) %>%
+  filter(!is.na(s1_id) & !is.na(s4_id)) %>%
+  group_by(s4_id) %>%
+  mutate(
+    u4schbmm = first(u4schbmm[!is.na(u4schbmm)])
+  ) %>%
+  group_by(s2mmfive, u4schbmm) %>%
+  summarize(
+    mean = mean(p1ageent, na.rm = T), 
+    n = n()
+  ) 
+
+print(jk)
+
+  ggplot(aes(s2mmfive, y = mean)) + 
+  geom_line() + 
+  theme_minimal()
+
+jk <- ecls_clean %>%
+  select(s4_id, s6_id, s7_id,s5_st_id, s6_st_id) %>%
+  distinct()
+
+ecls_clean %>%
+  filter(s1_id != s4_id) %>%
+  filter(!s1_id %in% jk$s4_id) %>%
+  filter(!is.na(t4_id)) %>%
+  group_by(s1_id, s4_id) %>%
+  summarize(n = n() - sum(is.na(s4_id))) %>%
+  filter(n == 1)
+
+ecls_clean %>%
+  filter(s1_id != s4_id) %>%
+  filter(!s1_id %in% jk$s4_id) %>%
+  group_by(s1_id) %>%
+  summarize(n = n_distinct(s4_id)) %>%
+  filter(n == n() - sum(is.na(s1_id)))
+
+jk %>%
+  ungroup() %>%
+  filter(s2mmfive == 8) %>%
+  filter(u4schbmm >= 0) %>%
+  head()
+
+table(ecls_clean$u4schbmm)
+
+jk <- ecls_clean %>%
+  group_by(s4_id) %>%
+  mutate(
+    u4schbmm = first(u4schbmm[!is.na(u4schbmm)])
+  )
+
+jk %>%
+  select(s1_id, s4_id, u4schbmm)
+table(jk$u4schbmm)
+
+# 1998 - 1999  S2YYFIVE
+table(jk$s2yyfive)
+
+jk <- ecls_clean %>%
+  filter(s2mmfive >= 0) %>%
+  filter(p1ageent >= 0) %>%
+  filter(!is.na(s1_id) & !is.na(s4_id)) %>%
+  filter(s2yyfive == 1998) %>%
+  group_by(s2mmfive) %>%
+  summarize(
+    mean = mean(p1ageent, na.rm = T), 
+    n = n()
+  ) 
+
+table(ecls_clean$s2yyfive)
+
+# Entry Rules are a Good Instrument!
+ecls_clean %>%
+  filter(s2mmfive >= 0) %>%
+  filter(p1ageent >= 0) %>%
+  filter(!is.na(s1_id) & !is.na(s4_id)) %>%
+  filter(s2yyfive == 1998) %>%
+  group_by(s2mmfive) %>%
+  summarize(
+    mean = mean(p1ageent, na.rm = T), 
+    n = n()
+  ) %>%
+  ggplot(aes(x = s2mmfive, y = mean)) + 
+  geom_line() + 
+  theme_minimal()
+
+
+ggplot(aes(x= s2mmfive, y = mean), data = jk) + 
+  geom_line() + 
+  theme_minimal()
+
+jk <- ecls_clean %>%
+  filter(s2yyfive == 1998) %>%
+  filter(s2mmfive >= 0) %>%
+  mutate(after_7 = as.factor(s2mmfive >= 7)
+  ) 
+```
+
+
+
+```{r}
+# Huge effect on p4learn and t4interp, learn, extern, 
+# And also t6learn! 
+# As well as M6RTMTH 
+model <- lm(p1ageent ~ p1hfamil + w1raceth + w1momed + w1daded + s2mmfive * after_7 + p1firkdg + sch_math_mean_1, data = jk)
+summary(model)
+
+model <- lm(p4learn ~ p1hfamil + w1raceth + w1momed + w1daded + s2mmfive * after_7 + p1firkdg + sch_math_mean_1, data = jk)
+summary(model)
+
+summary(ecls_clean$c6r4mscl)
+
+jk %>%
+  select(matches("firk"))
+
+ecls_clean %>%
+  group_by(s2mmfive, s2yyfive) %>%
+  filter(s2yyfive >= 1997) %>%
+  summarize(
+    mean = mean(p1ageent, na.rm = T), 
+    n = n()
+  )
+
+
+ecls_clean %>%
+  group_by(s2mmfive, s2yyfive) %>%
+  filter(s2yyfive >= 1997) %>%
+  summarize(
+    mean = mean(p1ageent, na.rm = T), 
+    n = n()
+  )
+
+table(ecls_clean$s2mmfive)
+
+table(ecls_clean$u4schbmm)
+
+ecls_clean %>%
+  group_by(s1_id) %>%
+  summarize(
+    n = n_distinct(childid)
+  )
+
+head(ecls_clean)
+```
+
+```{r}
+########################## 
+# 0. Variables of Interest 
+########################## 
+
 colnames <- names(ecls_clean)
 
-########################## 
-# 0. Define Variables 
-########################## 
+# By-Grade SES Vars 
+# SES is the only variable coded by grade level, which is consistent with the ECLS 
+for (i in c(1,3,5,8)) {
+  assign(paste0("ses_vars_", i), c(paste0("w", i, "momed"),
+                                   paste0("w", i, "daded"),
+                                   paste0("w", i, "momscr"),
+                                   paste0("w", i, "dadscr"),
+                                   paste0("w", i, "povrty"),
+                                   paste0("w", i, "disabl"),
+                                   paste0("w", i, "raceth")))
+}
 
-# 0.1 Standard Identification Variables
-id_vars <- colnames[str_detect(colnames, "^[sdtj][0-9].*_id$")]
+# Other Vars by Data Collection Round 
+for (i in c(1,2,4,5,6,7)) {
+  assign(paste0("fam_vars", i), c(paste0("p", i, "hfamil"), 
+                                  paste0("p", i, "hmemp"), 
+                                  paste0("p", i, "hdemp"), 
+                                  paste0("p", i, "numsib"))
+         )
+}
+      
+child_vars <- c("p1ageent", "p1agefrs", "w1raceth", "p1firkdg", "p1center")
 
-# 0.2 Important Identification Variables 
-patterns <- c("p1ageent", "p1agefrs", "p1hrsnow", "p1primnw", "p1center", "p1disabl", "p[0-9]htotal", "p[0-9]firkdg")
+tch_vars <- c("b1behvr", "b1yrskin", "b1yrsch", "b1notcap", "race_match_k")
+```
 
-child_vars <- colnames[str_detect(colnames, paste(patterns, collapse = "|"))]
+
+
+```{r}
+for (i in c(1,2,4,5,6)) {
+  # Teacher Vars
+  assign(paste0("tch_eval_", i), c(paste0("t", i, "learn"), paste0("t", i, "extern"), paste0("t", i, "intern"), paste0("t", i, "contro"), paste0("t", i, "difliv")))
   
-# 0.3 Non-Cognitive Markers
-patterns <- c("^[ctp][0-9]social", "^[ctp][0-9]sadlon", "^[ctp][0-9]impuls", "^[ctp][0-9]interp", "^[ctp][0-9]extern", "^[ctp][0-9]scint", "^[c][0-9].*sdqext", "^[c][0-9].*sdqinr") # Attitude toward learning
+  # Test Vars 
+  assign(paste0("test_eval_", i), c(paste0("c", i, "r4rscl"), paste0("c", i, "r4mscl"), paste0("c", i, "r4rpf"), paste0("c", i, "r4mpf")))
+  
+  # Class Vars 
+  assign(paste0("class_eval_", i), c(paste0("class_math_mean_", i), paste0("class_rdg_mean_", i), paste0("class_interp_mean_", i), paste0("class_learn_mean_", i)))
+  
+  # School Vars 
+  assign(paste0("sch_eval_", i), c(paste0("sch_math_mean_", i), paste0("sch_rdg_mean_", i), paste0("sch_social_mean_", i), paste0("sch_learn_mean_", i)))
+}
 
-non_cog <- colnames[
-  str_detect(colnames, paste(patterns, collapse = "|"))
-]
+for (i in c(1,4,5,6,7)) {
+  # Parent Evaluations 
+  assign(paste0("par_eval_", i), c(paste0("p", i, "sameag"), paste0("p", i, "learn"), paste0("p", i, "social")))
+}
 
-# 0.4 Cognitive Markers 
-patterns <- c("^[c][0-9].*scord", "^[c][0-9].*scart", "^[c][0-9].*scsto", "^[c][0-9].*sctot", "^[c][0-9][r][42g].*", "^[c][0-9].*lifesc", "^[c][0-9].*physsc", "^[c][0-9].*earthsc", "^[c][0-9].*sdqrdc", "^[c][0-9].*sdqmtc",
-              "^[c][0-9][r][0-9]mscl", "^[c][0-9][r][0-9]rscl") 
+test_eval_7 <- c("c7r4rscl", "c7r4mscl", "c7r2sscl")
+tch_eval_cog_7 <- c("t7arsmat", "t7arsorl", "t7arssci", "t7arswrt")
+tch_eval_ncog_7 <- c("g7wrkhrd", "g7attent", "g7organz", "m7wrkhrd", "m7attent", "n7wrkhrd", "n7attent")
+child_eval_ncog_7 <- c("c7sports", "c7trywt", "c7home", "c7angry", "c7angry", "c7likrd", "c7lonly", "c7flgood", "c7worth", "c7able", "c7stops", "c7noplan", "c7cherpa", "c7sdqint")
+child_eval_cog_7 <- c("c7sdqmtc", "c7sdqrdc")
+par_eval_7 <- c("p7learng")
+par_vars_7 <- c("p7attenp", "p7ofttlk", "p7hmemp")
+```
 
-cog <- colnames[
-  str_detect(colnames, paste(patterns, collapse = "|"))
-]
 
-# 0.5 Self-Perceived Non-Cognitive Markers
-patterns <- c("c[0-9]mthgd", "c[0-9]engbst", "c[0-9]angry", "c[0-9]likrd", "c[0-9]wrytst", "c[0-9]sad", "c[0-9]likmth", "c[0-9]wrywel", "c[0-9]wryfin", "c[0-9]enjrd", "c[0-9]wryhng", "c[0-9]grdeng", "c[0-9]ashame", "c[0-9]flgood", "c[0-9]nocntr", "c[0-9]luck")
 
-self_percep <- colnames[
-  str_detect(colnames, paste(patterns, collapse = "|"))
-]
+```{r}
+########################## 
+# 1. Run Regressions 
+########################## 
 
-# 0.6 Family Markers
-patterns <- c("w[0-9]hearly", "w[0-9]pared", "w[0-9]momar", "w[0-9]raceth", "w[0-9]white", "w[0-9]black", "w[0-9]momscr", "w[0-9]dadscr", "w[0-9]sesl", "w[0-9]sesq5", "w[0-9]povrty", "w[0-9]income", "w[0-9]inccat", "p5fsstat", "p[0-9]disabl", "p[0-9]hmemp", "p[0-9]hdemp", "p[0-9]momocc", "p[0-9]dadocc", "p[0-9]numsib", "p[0-9]hfamil", "p5hparent")
+paste_lm <- function(var_name) {
+  return(paste(var_name, collapse = "+"))
+}
 
-family_vars <- colnames[
-  str_detect(colnames, paste(patterns, collapse = "|"))
-]
+for (i in seq_along(test_eval_2)) {
+  cat("############### \n OUTCOME VARIABLE:", test_eval_2[i], "\n###############")
+  
+  patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(par_eval_1), paste_lm(tch_eval_1), paste_lm(class_eval_1), paste_lm(sch_eval_1), paste_lm(test_eval_1)), collapse = "+")
+  
+  formula <- as.formula(paste(paste(test_eval_2[i], "~"),
+                              patterns))
+  model <- lm(formula, data = ecls_clean_exp)
+  
+  print(summary(model))
+}
 
-# Parental perception -- P#LRNRDG, P# LRNMTH -- how likely do you think your kdi is? 
-# Not sure how defined: "^[ctp][0-9]learn", "^[ctp][0-9]locus", "^[ctp][0-9]concpt", "^[ctp][0-9]contro",  "^[c][0-9].*sdqsbc" "^[c][0-9].*sdqprc",
+for (i in seq_along(tch_eval_1)) {
+  cat("############### \n OUTCOME VARIABLE:", tch_eval[i], "\n###############")
+  tch_eval <- setdiff(tch_eval_1, tch_eval_1[i])
+  patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(tch_vars), paste_lm(par_eval_1), paste_lm(tch_eval), paste_lm(class_eval_1), paste_lm(sch_eval_1)), collapse = "+")
+  
+  formula <- as.formula(paste0(paste(tch_eval_1[i], "~"),
+                               patterns)) 
+  model <- lm(formula, data = ecls_clean_exp) 
+  print(summary(model))
+}
 
-# 0.7 School Change Markers 
-patterns <- c("^fkch.*", "[r][0-9][r][0-9].*tchg", "[r][0-9][r][0-9].*schg")
+for (i in seq_along(par_eval_1)) {
+  cat("############### \n OUTCOME VARIABLE:", par_eval_1[i], "\n###############") 
+  
+  patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(tch_vars), paste_lm(tch_eval), paste_lm(class_eval_1), paste_lm(sch_eval_1), paste_lm(test_eval_1)), collapse = "+")
+  
+  formula <- as.formula(paste0(paste(par_eval_1[i], "~"), 
+                        patterns))
+  
+  model <- lm(formula, data = ecls_clean_exp)
+  print(summary(model))
+}
 
-change_vars <- colnames[
-  str_detect(colnames, paste(patterns, collapse = "|"))
-]
+patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(par_eval_4), paste_lm(class_eval_5), paste_lm(sch_eval_5), paste_lm(test_eval_7), paste_lm(child_eval_ncog_7)), collapse = "+")
 
-# 0.8 Administrative Classroom Markers 
-patterns <- c("[agm][0-9]pmin", "[agm][0-9]pblk", "[agm][0-9]plep", # Percentage of minorities 
-              "s[0-9]cmnity", "s[0-9]tnsion", "s[0-9]drugs", "s[0-9]gangs", "s[0-9]vlence", "s[0-9]crime", # Crime and Neighborhood Characteristics 
-              "s[0-9]pctrd", "s[0-9]pctmth", "s[0-9]chcare", "s[0-9]prntng", "s[0-9]ptamt", "s[0-9]rprtcd", "s[0-9]ptconf", "s[0-9]claspr", "s[0-9]gopta", "s[0-9]goal7", 
-# Programs, Support, Engagement
-              "s[0-9]lepsch", "s[0-9]lepknd", # LEP Kids
-              "[agmn][0-9]clsz", 
-              "s[0-9]kpupri", "s[0-9]ada", # Class Size
-              "b[0-9]lrnrea", "b[0-9]tchprn", "b[0-9]prctwr","s[0-9]pctrd", "s[0-9]pctmth", # Teacher perceptions
-              "d[0-9]yrstch", "d[0-9]gned", "b[0-9]age" # Teacher Credentials
-              )
-
-classroom_vars <- colnames[
-  str_detect(colnames, paste(patterns, collapse = "|"))
-]
-
-# 0.9 Other Classroom Markers 
-patterns <- c("c[0-9]safe", "c[0-9]grdyou", "c[0-9]grdpar", "c[0-9]desmth", "c[0-9]dessci", "c[0-9]tutorr", "c[0-9]tutorm")
-
-other_classroom_vars <- colnames[
-  str_detect(colnames, paste(patterns, collapse = "|"))
-]
 ```
 
 
 ```{r}
-all_selected_vars <- c(id_vars, child_vars, non_cog, cog, self_percep, family_vars, change_vars, classroom_vars, other_classroom_vars)
+##########################
+# 2. Entry Age and other Factors
+##########################
 
-# Create a data frame that categorizes the variables 
-variable_table <- data.frame(variable = all_selected_vars,
-                             category = c(rep("Standard Identification", length(id_vars)),
-                                         rep("Important Identification", length(child_vars)),
-                                         rep("Non-Cognitive Markers", length(non_cog)),
-                                         rep("Cognitive Markers", length(cog)),
-                                         rep("Self-Perceived Non-Cognitive Markers", length(self_percep)),
-                                         rep("Family Markers", length(family_vars)),
-                                         rep("School Change Markers", length(change_vars)),
-                                         rep("Administrative Classroom Markers", length(classroom_vars)),
-                                         rep("Other Classroom Markers", length(other_classroom_vars))))
+formula <- as.formula(paste("sch_math_mean_5 ~", paste(c("sch_delta_45_mean_4", "sch_math_mean_4", "sch_ageent_mean_1"), collapse = "+")))
+mod <- lm(formula, data = ecls_clean_exp)
+summary(mod)
 
-# View the table
-variable_table
-length(all_selected_vars)
+formula <- as.formula(paste("c1r4rtsc ~", paste(c(paste_lm(child_vars), paste_lm(ses_vars), paste_lm(school_eval_1), "sch_ageent_mean_4", "sch_income_mean_4", "sch_par1ed_mean_4", "sch_par2ed_mean_4", "x2mscalk5"), collapse = "+")))
+mod <- lm(formula, data = ecls_new_clean_exp)
+summary(mod)
+
+formula <- as.formula(paste("p1ageent ~ ", paste(c(paste_lm(child_vars), paste_lm(ses_vars), paste_lm(sch_eval_1), "sch_ageent_mean_1",  "sch_delta_12_mean_1"), collapse = "+")))
+mod <- lm(formula, data = ecls_clean_exp)
+summary(mod)
+
+formula <- as.formula(paste("sch_math_mean_1 ~ ", paste(c("sch_ageent_mean_1", "sch_income_mean_1", "sch_par1ed_mean_1", "sch_par2ed_mean_1", "sch_delta_12_mean_1"), collapse = "+")))
+mod <- lm(formula, data = ecls_new_clean_exp)
+summary(mod)
+
 ```
-
 
 # ECLS 2011 
 ```{r}
@@ -159,131 +557,369 @@ save(ecls_new, file = file.path(external_path, "ecls_2011/raw_ecls_new.RData"))
 load(file.path(external_path, "ecls_2011/raw_ecls_new.RData"))
 
 ecls_new_clean <- ecls_new %>% 
-  clean_names()
+  clean_names() %>%
+  select(where(~ !all(is.na(.) | . == -2 | . == -9))) %>%
+  mutate(
+    across(
+      c(x1hparnt, x2hparnt, x4hparnt, x5hparnt, x6hparnt, x7hparnt, x8hparnt, x9hparnt, 
+        x1par1emp, x4par1emp, x6par1emp, x9par1emp, 
+        x1par2emp, x4par2emp, x6par2emp, x9par2emp, 
+        x_raceth_r, 
+        x12par1ed_i, x4par1ed_i, x7par1ed_i, x8par1ed_i, x9par1ed_i, 
+        x12par2ed_i, x4par2ed_i, x7par2ed_i, x8par2ed_i, x9par2ed_i, 
+        x2povty, x4povty_i, x6povty_i, x7povty_i, x8povty_i, x9povty_i), 
+      as.factor()
+    ), 
+    across(
+      c(x1hparnt, x2hparnt, x4hparnt, x5hparnt, x6hparnt, x7hparnt, x8hparnt, x9hparnt, 
+        x1par1emp, x4par1emp, x6par1emp, x9par1emp, 
+        x1par2emp, x4par2emp, x6par2emp, x9par2emp, 
+        x_raceth_r, 
+        x12par1ed_i, x4par1ed_i, x7par1ed_i, x8par1ed_i, x9par1ed_i, 
+        x12par2ed_i, x4par2ed_i, x7par2ed_i, x8par2ed_i, x9par2ed_i, 
+        x2povty, x4povty_i, x6povty_i, x7povty_i, x8povty_i, x9povty_i), 
+      ~ if_else(.x <= 0, NA_real_, .x)
+    )
+  )
 
-nrow(ecls_new)
-ecls_new_clean
-```
-
-
-# Impact of Parent's Positive Distortionary Beliefs
-```{r}
-ecls_clean_improved <- ecls_clean %>%
-  filter(t2learn >=0 & p2learn >=0 & p1sameag >= 0 & c7ashame >= 0 & p5sameag >= 0 & p4sameag >= 0 & c7wryfin >=0) 
+for (i in c(1,2,4,6,7,8,9)) {
+  score <- paste0("x", i, "rscalk5") 
   
-ggplot(data = ecls_clean_improved %>%
-         group_by(p2learn) %>%
-         summarize(mean = mean(t2learn, na.rm = T), 
-                   median = quantile(t2learn, 0.5, na.rm = T))) + 
-  geom_line(aes(x = p2learn, y = mean, color = "mean t2learn")) + 
-  geom_line(aes(x = p2learn, y = median, color = "median t2learn")) + 
-  theme_minimal()
+  ecls_new_clean_exp <- calculate_school_means(ecls_new_clean_exp, i, score, "rdg")
+  
+  score <- paste0("x", i, "mscalk5") 
+  
+  ecls_new_clean_exp <- calculate_school_means(ecls_new_clean_exp, i, score, "math")
+  
+  score <- paste0("x", i, "tchper") 
+  
+  ecls_new_clean_exp <- calculate_school_means(ecls_new_clean_exp, i, score, "social")
+}
 
-hist(ecls_clean_improved$t2learn, breaks = seq(min(ecls_clean_improved$t2learn, na.rm = TRUE), 
-                                               max(ecls_clean_improved$t2learn, na.rm = TRUE), 
-                                               by = 0.05))
-hist(ecls_clean_improved$p2learn, breaks = seq(min(ecls_clean_improved$p2learn, na.rm = TRUE), 
-                                               max(ecls_clean_improved$p2learn, na.rm = TRUE), 
-                                               by = 0.05))
-hist(ecls_clean_improved$p1sameag)
-
-model <- lm(p2learn ~ p1lookfo + p2impuls + p2social + p2sadlon, data = ecls_clean_improved)
-summary(model)
-
-hist(ecls_clean_improved$p2learn_demean)
-hist(ecls_clean_improved$p2learn_demean)
-
-model <- lm(p2learn ~ t2learn + c2r4mscl + p1lookfo + p2impuls + p2social + p2sadlon, data = ecls_clean_improved)
-summary(model)
-
-model <- lm(p2learn ~ c2r4mscl, data = ecls_clean_improved)
-summary(model)
-
-ggplot(data = ecls_clean_improved %>%
-         group_by(p2learn) %>%
-         summarize(mean = mean(c2r4mscl, na.rm = T))) + 
-  geom_line(aes(x = p2learn, y = mean, color = "mean t2learn")) + 
-  theme_minimal()
-
-ggplot(data = ecls_clean_improved %>%
-         group_by(p1sameag) %>%
-         summarize(mean = mean(c7wryfin, na.rm = T), 
-                   median = quantile(c7wryfin, 0.5, na.rm = T))) + 
-  geom_line(aes(x = p1sameag, y = mean, color = "mean t2learn")) + 
-  geom_line(aes(x = p1sameag, y = median, color = "mean t2learn")) + 
-  theme_minimal()
-
-ggplot(data = ecls_clean_improved %>%
-         group_by(t2learn) %>%
-         summarize(mean = mean(c7r4mscl, na.rm = T), 
-                   median = quantile(c7r4mscl, 0.5, na.rm = T))) + 
-  geom_line(aes(x = t2learn, y = mean, color = "mean t2learn")) + 
-  geom_line(aes(x = t2learn, y = median, color = "mean t2learn")) + 
-  theme_minimal()
-
-ggplot(data = ecls_clean_improved %>%
-         group_by(c7wryfin) %>%
-         summarize(mean = mean(c7r4mscl, na.rm = T), 
-                   median = quantile(c7r4mscl, 0.5, na.rm = T))) + 
-  geom_line(aes(x = c7wryfin, y = mean, color = "mean t2learn")) + 
-  geom_line(aes(x = c7wryfin, y = median, color = "mean t2learn")) + 
-  theme_minimal()
-
-
-# both teacher and parental beliefs are 
-
-yo <- ecls_clean_improved %>%
-  filter(c4r4mscl <= quantile(c4r4mscl, 0.10, na.rm = T)) %>%
-  group_by(p4sameag) %>%
-  summarize(
-    mean = mean(c5r4mscl, na.rm = T), 
-    mean_before = mean(c4r4mscl, na.rm = T)
+ecls_new_clean_exp <- ecls_new_clean_exp %>%
+  mutate(
+    delta_12 = x2mscalk5 - x1mscalk5, 
+    delta_23 = x3mscalk5 - x2mscalk5, 
+    delta_34 = x4mscalk5 - x3mscalk5, 
+    delta_45 = x5mscalk5 - x4mscalk5, 
+    delta_56 = x6mscalk5 - x5mscalk5, 
+    delta_67 = x7mscalk5 - x6mscalk5, 
+    delta_78 = x8mscalk5 - x7mscalk5
   )
 
-ggplot(data = yo) + 
-  geom_line(aes(x = p4sameag, y = mean, color = "mean_now")) + 
-  geom_line(aes(x = p4sameag, y = mean_before, color = "mean_before")) + 
-  theme_minimal()
-
-
-yo <- ecls_clean_improved %>%
-  filter(c5r4mscl <= quantile(c5r4mscl, 0.10, na.rm = T)) %>%
-  group_by(p5sameag) %>%
-  summarize(
-    mean = mean(c7ashame, na.rm = T)
-  )
-
-ggplot(data = yo) + 
-  geom_line(aes(x = p5sameag, y = mean, color = "mean_now")) + 
-  #geom_line(aes(x = p5sameag, y = mean_before, color = "mean_before")) + 
-  theme_minimal()
+for (i in c(1,2,4,6,7)) {
+  ecls_new_clean_exp <- calculate_school_means(ecls_new_clean_exp, i, "x1ageent", "ageent")
+  
+  score <- paste0("delta_", i, i+1)
+  
+  ecls_new_clean_exp <- calculate_school_means(ecls_new_clean_exp, i, score, score)
+  
+  ecls_new_clean_exp <- calculate_school_means(ecls_new_clean_exp, i, "x2inccat_i", "income")
+  
+  ecls_new_clean_exp <- calculate_school_means(ecls_new_clean_exp, i, "x12par1ed_i", "par1ed")
+  
+  ecls_new_clean_exp <- calculate_school_means(ecls_new_clean_exp, i, "x12par2ed_i", "par2ed")
+}
 
 
 ```
 
 
 ```{r}
-ggplot(data = ecls_clean %>% 
-         group_by(p1ageent) %>%
-         filter(p1ageent > 50) %>%
-         summarize(
-           mean = mean(c1r4mscl, na.rm = T)
-         )) + 
-  geom_line(aes(x = p1ageent, y = mean))
+##########################
+# 0. Variables of Interest 
+##########################
+
+child_vars <- c("x1ageent", "x_raceth_r", "x2disabl")
+
+ses_vars <- c("x1par1emp", "x1par2emp", "x2numsib", "x12par1ed_i", "x12par2ed_i", "x1par1scr_i", "x1par2scr_i", "x2inccat_i", "x2povty")
+
+for (i in 1:9) {
+  # Test Scores 
+  assign(paste0("test_eval_", i), c(paste0("x", i, "rscalk5"), paste0("x", i, "mscalk5") ))
+  
+  # Teacher Evals
+  assign(paste0("tch_eval_", i), c(paste0("x", i, "tchcon"), paste0("x", i, "tchper"), paste0("x", i, "tchext"), paste0("x", i, "tchint"), paste0("x", i, "tchapp")))
+  
+  # More Teacher Evals 
+  if (i %in% c(1,2,3,5,6,7)) {
+    assign(paste0("tch_eval_", i), c(get(paste0("tch_eval_", i)), c(paste0("t", i, "works"), paste0("t", i, "shows"), paste0("t", i, "follow"), paste0("t", i, "atten"))))
+  }
+}
+
+for (i in c(7,8,9)) {
+  assign(paste0("child_eval_", i), c(paste0("c", i, "teased"), paste0("c", i, "excldch"), paste0("c", i, "wrythk"), paste0("c", i, "afrdntlk"), paste0("c", i, "wrydtlk")))
+  
+  if (i == 7) {
+    assign("child_eval_7", c(get("child_eval_7"), c("c7gdread", "c7enjread", "c7enjmth", "c7gdmth", "c7hasfrnds", "c7easylik", "c7morfrnd", "c7cheerup", "c7niceoth")))
+  }
+  
+  if (i %in% c(8,9)) {
+    assign(paste0("child_eval_", i), c(get(paste0("child_eval_", i)), c(paste0("c", i, "wrkhrd"), paste0("c", i, "kidply"), paste0("c", i, "lonely"), paste0("c", i, "lftout"))))
+  }
+}
+
+for (i in c(1,2,4)) {
+  # Parent Evals 
+  assign(paste0("par_eval_", i), c(paste0("x", i, "prnapp"), paste0("x", i, "prncon"), paste0("x", i, "prnsoc"), paste0("x", i, "prnsad")))
+}
+
+for (i in c(1,2,4,6,7,8,9)) {
+  assign(paste0("school_eval_", i), c(paste0("sch_math_mean_", i), paste0("sch_social_mean_", i), paste0("sch_rdg_mean_", i)))
+}
 ```
 
 
+```{r}
+##########################
+# 1. Run Regressions  
+##########################
+
+ecls_new_clean_exp <- ecls_new_clean_exp %>%
+  filter(if_all(all_of(tch_eval_4), ~ . >= 0), 
+         if_all(all_of(tch_eval_2), ~ . >= 0),
+         if_all(all_of(par_eval_2), ~ . >= 0),
+         if_all(all_of(par_eval_4), ~ . >= 0)) %>%
+  mutate(x1par1emp = as.factor(x1par1emp), 
+         x1par2emp = as.factor(x1par2emp))
+
+ecls_new_clean_exp <- ecls_new_clean_exp %>%
+  filter(if_all(all_of(child_eval_7), ~. >= 0)) %>%
+  mutate(x1par1emp = as.factor(x1par1emp), 
+         x1par2emp = as.factor(x1par2emp))
+
+for (i in seq_along(test_eval_4)) {
+  cat("######################## \n", "OUTCOME VARIABLE: ", test_eval_4[i], " \n#######################")
+  
+  patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(school_eval_4), paste_lm(test_eval_2), paste_lm(tch_eval_2)), collapse = "+")
+  
+  formula <- as.formula(paste0(paste0(test_eval_4[i], "~"), 
+                               patterns))
+  
+  model <- lm(formula, data = ecls_new_clean_exp)
+  
+  print(summary(model))
+}
+
+for (i in seq_along(tch_eval_4)) {
+  cat("######################## \n", "OUTCOME VARIABLE: ", tch_eval_4[i], " \n#######################")
+  
+  patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(school_eval_2), paste_lm(par_eval_4), paste_lm(test_eval_4), paste_lm(test_eval_2), paste_lm(tch_eval_2)), collapse = "+") 
+  
+  formula <- as.formula(paste0(paste0(tch_eval_4[i], "~"), 
+                               patterns)
+                        )
+  
+  model <- lm(formula, data = ecls_new_clean_exp)
+  
+  print(summary(model))
+}
 
 
+for (i in seq_along(par_eval_4)) {
+  cat("######################## \n", "OUTCOME VARIABLE: ", par_eval_4[i], " \n#######################")
+  
+  patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(school_eval_4), paste_lm(par_eval_2), paste_lm(test_eval_4), paste_lm(tch_eval_2)), collapse = "+") 
+  
+  formula <- as.formula(paste0(paste0(par_eval_4[i], "~"), 
+                               patterns)
+                        )
+  
+  model <- lm(formula, data = ecls_new_clean_exp)
+  
+  print(summary(model))
+}
+
+for (i in seq_along(child_eval_7)) {
+  cat("######################## \n", "OUTCOME VARIABLE: ", child_eval_7[i], " \n#######################")
+  
+  patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(school_eval_6), paste_lm(par_eval_4), paste_lm(test_eval_6), paste_lm(tch_eval_5)), collapse = "+") 
+  
+  formula <- as.formula(paste0(paste0(child_eval_7[i], "~"), 
+                               patterns)
+                        )
+  
+  model <- lm(formula, data = ecls_new_clean_exp)
+  
+  print(summary(model))
+}
+
+paste("")
+```
+
+```{r}
+##########################
+# 1. Run Regressions  
+##########################
+
+ecls_new_clean_exp <- ecls_new_clean_exp %>%
+  mutate(across(all_of(child_eval_7), as.numeric)) %>%
+  filter(if_all(all_of(child_eval_7), ~. != -7 & . != -9))
+
+for (i in seq_along(child_eval_7)) {
+  cat("######################## \n", "OUTCOME VARIABLE: ", child_eval_7[i], " \n#######################")
+  
+  patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(school_eval_6), paste_lm(par_eval_4), paste_lm(test_eval_6), paste_lm(tch_eval_5)), collapse = "+") 
+  
+  formula <- as.formula(paste0(paste0(child_eval_7[i], "~"), 
+                               patterns)
+                        )
+  
+  model <- multinom(formula, data = ecls_new_clean_exp)
+  
+  print(summary(model))
+}
+
+child_eval_7
 
 
+cat("######################## \n", "OUTCOME VARIABLE: ", "gdread", " \n#######################")
+  
+patterns <- paste(c(paste_lm(ses_vars), paste_lm(child_vars), paste_lm(school_eval_6), paste_lm(test_eval_7), paste_lm(tch_eval_5)), collapse = "+") 
+  
+formula <- as.formula(paste0(paste0("c7gdread", "~"), 
+                               patterns)
+                        )
+  
+model <- multinom(formula, data = ecls_new_clean_exp, maxit = 500)
+model_summary <- summary(model)
+vif(model)
+
+z_values <- model_summary$coefficients / model_summary$standard.errors
+p_values <- 2 * (1 - pnorm(abs(z_values)))
+print(p_values)
+ses_vars
+
+paste("")
+```
+
+```{r}
+##########################
+# 1. Entry Age and other Factors
+##########################
+
+ecls_new_clean_exp <- ecls_new_clean_exp %>%
+  filter(x1ageent >= 0 & x1mscalk5 >= 0 & x2mscalk5 >= 0)
+
+ggplot(ecls_new_clean_exp) + 
+  geom_histogram(aes(x = x1ageent), bins = 50)
+
+summary(ecls_new_clean_exp$x1ageent)
 
 
+ecls_new_clean_exp %>%
+  filter(delta_12 <= -10)
+
+summary(ecls_new_clean_exp$delta_12)
+
+ 
+ 
+formula <- as.formula(paste("x2mscalk5 ~", paste(c(paste_lm(child_vars), paste_lm(ses_vars), paste_lm(school_eval_1), "x1mscalk5",  "sch_math_mean_1", "sch_income_mean_2", "sch_par1ed_mean_2", "sch_par2ed_mean_2"), collapse = "+")))
+mod <- lm(formula, data = ecls_new_clean_exp)
+summary(mod)
+
+formula <- as.formula(paste("sch_delta_78_mean_7 ~", paste(c(paste_lm(school_eval_1), "x7mscalk5",  "sch_math_mean_7", "sch_income_mean_6", "sch_par1ed_mean_6", "sch_par2ed_mean_6", "sch_delta_67_mean_6"), collapse = "+")))
+mod <- lm(formula, data = ecls_new_clean_exp)
+summary(mod)
 
 
+```
+
+```{r}
+formula <- as.formula(paste("sch_delta_12_mean_1 ~", paste(c(paste_lm(child_vars), paste_lm(ses_vars), paste_lm(school_eval_1), "x1mscalk5",  "sch_math_mean_1", "sch_income_mean_2","sch_ageent_mean_2", "sch_par1ed_mean_2", "sch_par2ed_mean_2"), collapse = "+")))
+mod <- lm(formula, data = ecls_new_clean_exp)
+summary(mod)
+
+```
 
 
+```{r}
+formula <- as.formula(paste("x3tchper ~", paste(c(paste_lm(child_vars), paste_lm(ses_vars), paste_lm(school_eval_2), "sch_ageent_mean_2", "sch_income_mean_2", "sch_par1ed_mean_2", "sch_par2ed_mean_2", paste_lm(par_eval_2), "x2tchper"), collapse = "+")))
+mod <- lm(formula, data = ecls_new_clean_exp)
+summary(mod)
 
+par_eval_2
+tch_eval_2
+```
+
+```{r}
+formula <- as.formula(paste("x1ageent ~ ", paste(c(paste_lm(child_varss), paste_lm(ses_vars), paste_lm(school_eval_1), "sch_ageent_mean_1", "sch_income_mean_1", "sch_par1ed_mean_1",  "sch_par2ed_mean_1", "sch_delta_12_mean_1", "x1par1emp", "x1par2emp"), collapse = "+")))
+mod <- lm(formula, data = ecls_new_clean_exp)
+summary(mod)
+
+formula <- as.formula(paste("sch_math_mean_1 ~ ", paste(c("sch_ageent_mean_1", "sch_income_mean_1", "sch_par1ed_mean_1", "sch_par2ed_mean_1", "sch_delta_12_mean_1"), collapse = "+")))
+mod <- lm(formula, data = ecls_new_clean_exp)
+summary(mod)
+
+summary(ecls_new_clean_exp$x1mscalk5)
+
+formula <- as.formula(paste("x2mscalk5 ~", paste(c(paste_lm(child_vars), paste_lm(ses_vars), paste_lm(school_eval_1), "sch_ageent_mean_1", "sch_delta_12_mean_1", "sch_math_mean_1"), collapse = "+")))
+mod <- lm(formula, data = ecls_new_clean_exp)
+summary(mod)
+
+ecls_new_clean_exp %>%
+  select(matches("delta_12"))
+
+```
+
+```{r}
+
+ggplot(data = ecls_new_clean_exp %>%
+         mutate(
+           quantile_group = cut(
+             x1ageent,
+             breaks = quantile(x1ageent, probs = seq(0, 1, by = 0.1), na.rm = TRUE),
+             include.lowest = TRUE,
+             labels = 1:10
+    )) %>%
+         group_by(quantile_group) %>%
+         summarize(
+           mean_1 = mean(x1mscalk5, na.rm = T), 
+           mean_2 = mean(x2mscalk5, na.rm = T), 
+           mean_3 = mean(x3mscalk5, na.rm = T), 
+           mean_4 = mean(x4mscalk5, na.rm = T), 
+           mean_5 = mean(x5mscalk5, na.rm = T), 
+           mean_6 = mean(x6mscalk5, na.rm = T), 
+           mean_7 = mean(x7mscalk5, na.rm = T)
+         ) %>%
+      mutate(
+        quantile_group = as.numeric(as.character(quantile_group))
+      )) + 
+  geom_line(aes(x = quantile_group, y = mean_7)) +
+  labs(
+    x = "Kindergarten Starting Age (Mths)", 
+    y = "Mean Math Scores", 
+    title = "Cross-sectional relationship between starting age and achievement"
+  ) +
+  theme_minimal()
+
+summary(ecls_new_clean_exp$x1ageent)
+
+
+ggplot(data = ecls_new_clean_exp %>%
+         mutate(
+           quantile_group = cut(
+             x1ageent,
+             breaks = quantile(x1ageent, probs = seq(0, 1, by = 0.025), na.rm = TRUE),
+             include.lowest = TRUE,
+             labels = 1:40
+    )) %>%
+         group_by(quantile_group) %>%
+         summarize(
+           mean_1 = mean(sch_math_mean_1, na.rm = T), 
+           mean_2 = mean(sch_math_mean_2, na.rm = T), 
+           #mean_3 = mean(sch_ageent_mean_3, na.rm = T), 
+           mean_4 = mean(sch_math_mean_4, na.rm = T), 
+           mean_6 = mean(sch_math_mean_6, na.rm = T)
+         ) %>%
+      mutate(
+        quantile_group = as.numeric(as.character(quantile_group))
+      ) %>%
+      filter(quantile_group >= 5)) + 
+  geom_line(aes(x = quantile_group, y = mean_4)) +
+  theme_minimal()
+
+```
 
 
 

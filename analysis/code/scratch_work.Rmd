@@ -1,0 +1,174 @@
+
+```{r}
+# Define covariates of interest
+colnames <- names(ecls_clean)
+
+########################## 
+# 0. Define Variables 
+########################## 
+
+# 0.1 Standard Identification Variables
+id_vars <- colnames[str_detect(colnames, "^[sdtj][0-9].*_id$")]
+
+# 0.2 Important Identification Variables 
+patterns <- c("p1ageent", "p1agefrs", "p1hrsnow", "p1primnw", "p1center", "p1disabl", "p[0-9]htotal", "p[0-9]firkdg")
+
+child_vars <- colnames[str_detect(colnames, paste(patterns, collapse = "|"))]
+  
+# 0.3 Non-Cognitive Markers
+patterns <- c("^[ctp][0-9]social", "^[ctp][0-9]sadlon", "^[ctp][0-9]impuls", "^[ctp][0-9]interp", "^[ctp][0-9]extern", "^[ctp][0-9]scint", "^[c][0-9].*sdqext", "^[c][0-9].*sdqinr") # Attitude toward learning
+
+non_cog <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.4 Cognitive Markers 
+patterns <- c("^[c][0-9].*scord", "^[c][0-9].*scart", "^[c][0-9].*scsto", "^[c][0-9].*sctot", "^[c][0-9][r][42g].*", "^[c][0-9].*lifesc", "^[c][0-9].*physsc", "^[c][0-9].*earthsc", "^[c][0-9].*sdqrdc", "^[c][0-9].*sdqmtc",
+              "^[c][0-9][r][0-9]mscl", "^[c][0-9][r][0-9]rscl") 
+
+cog <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.5 Self-Perceived Non-Cognitive Markers
+patterns <- c("c[0-9]mthgd", "c[0-9]engbst", "c[0-9]angry", "c[0-9]likrd", "c[0-9]wrytst", "c[0-9]sad", "c[0-9]likmth", "c[0-9]wrywel", "c[0-9]wryfin", "c[0-9]enjrd", "c[0-9]wryhng", "c[0-9]grdeng", "c[0-9]ashame", "c[0-9]flgood", "c[0-9]nocntr", "c[0-9]luck")
+
+self_percep <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.6 Family Markers
+patterns <- c("w[0-9]hearly", "w[0-9]pared", "w[0-9]momar", "w[0-9]raceth", "w[0-9]white", "w[0-9]black", "w[0-9]momscr", "w[0-9]dadscr", "w[0-9]sesl", "w[0-9]sesq5", "w[0-9]povrty", "w[0-9]income", "w[0-9]inccat", "p5fsstat", "p[0-9]disabl", "p[0-9]hmemp", "p[0-9]hdemp", "p[0-9]momocc", "p[0-9]dadocc", "p[0-9]numsib", "p[0-9]hfamil", "p5hparent")
+
+family_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# Parental perception -- P#LRNRDG, P# LRNMTH -- how likely do you think your kdi is? 
+# Not sure how defined: "^[ctp][0-9]learn", "^[ctp][0-9]locus", "^[ctp][0-9]concpt", "^[ctp][0-9]contro",  "^[c][0-9].*sdqsbc" "^[c][0-9].*sdqprc",
+
+# 0.7 School Change Markers 
+patterns <- c("^fkch.*", "[r][0-9][r][0-9].*tchg", "[r][0-9][r][0-9].*schg")
+
+change_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.8 Administrative Classroom Markers 
+patterns <- c("[agm][0-9]pmin", "[agm][0-9]pblk", "[agm][0-9]plep", # Percentage of minorities 
+              "s[0-9]cmnity", "s[0-9]tnsion", "s[0-9]drugs", "s[0-9]gangs", "s[0-9]vlence", "s[0-9]crime", # Crime and Neighborhood Characteristics 
+              "s[0-9]pctrd", "s[0-9]pctmth", "s[0-9]chcare", "s[0-9]prntng", "s[0-9]ptamt", "s[0-9]rprtcd", "s[0-9]ptconf", "s[0-9]claspr", "s[0-9]gopta", "s[0-9]goal7", 
+# Programs, Support, Engagement
+              "s[0-9]lepsch", "s[0-9]lepknd", # LEP Kids
+              "[agmn][0-9]clsz", 
+              "s[0-9]kpupri", "s[0-9]ada", # Class Size
+              "b[0-9]lrnrea", "b[0-9]tchprn", "b[0-9]prctwr","s[0-9]pctrd", "s[0-9]pctmth", # Teacher perceptions
+              "d[0-9]yrstch", "d[0-9]gned", "b[0-9]age" # Teacher Credentials
+              )
+
+classroom_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+
+# 0.9 Other Classroom Markers 
+patterns <- c("c[0-9]safe", "c[0-9]grdyou", "c[0-9]grdpar", "c[0-9]desmth", "c[0-9]dessci", "c[0-9]tutorr", "c[0-9]tutorm")
+
+other_classroom_vars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+```
+
+
+```{r}
+all_selected_vars <- c(id_vars, child_vars, non_cog, cog, self_percep, family_vars, change_vars, classroom_vars, other_classroom_vars)
+
+# Create a data frame that categorizes the variables 
+variable_table <- data.frame(variable = all_selected_vars,
+                             category = c(rep("Standard Identification", length(id_vars)),
+                                         rep("Important Identification", length(child_vars)),
+                                         rep("Non-Cognitive Markers", length(non_cog)),
+                                         rep("Cognitive Markers", length(cog)),
+                                         rep("Self-Perceived Non-Cognitive Markers", length(self_percep)),
+                                         rep("Family Markers", length(family_vars)),
+                                         rep("School Change Markers", length(change_vars)),
+                                         rep("Administrative Classroom Markers", length(classroom_vars)),
+                                         rep("Other Classroom Markers", length(other_classroom_vars))))
+
+# View the table
+variable_table
+length(all_selected_vars)
+```
+
+
+# Calculate Class Means
+
+```{r}
+calculate_class_means <- function(data, i, score, type) {
+  s_id <- paste0("s", i, "_id")
+  t_id <- paste0("t", i, "_id")
+  class_sum <- paste0("class_", type, "_sum_", i) 
+  class_mean <- paste0("class_", type, "_mean_", i)
+  class_n <- paste0("class_n_", i)
+  sch_mean <- paste0("sch_", type, "_mean_", i)
+  
+  data <- data %>%
+    group_by(!!sym(s_id)) %>%
+    group_by(!!sym(s_id), !!sym(t_id)) %>%
+    mutate(
+      !!sym(class_sum) := sum(!!sym(score), na.rm = T), 
+      !!sym(class_n) := n(), 
+      !!sym(class_mean) := (!!sym(class_sum) - !!sym(score)) / (n() - 1)
+    ) %>%
+    group_by(!!(s_id)) %>%
+    mutate(
+      !!(sch_mean) := (sum(!!sym(score), na.rm = T) - !!sym(class_sum)) / (n() - !!sym(class_n))
+    )
+  
+  return(data)
+}
+```
+
+
+
+# Test Hypotheses 
+```{r}
+head(ecls_clean_exp)
+colnames <- names(ecls_clean_exp)
+patterns <- c("c4r4mscl", "w1momscr", "w1dadscr", "w1pared", "w1povrty", "b1behvr",
+              #"b1nopayp", "b1paidpr", 
+              # "p1ageent", "p1agefrs", "p1social", "p1impuls", 
+              # "race_match", 
+              "b1yrskin", "b1yrsch", "c1r4mscl", "p1sameag", "p2toobus", "class_math_mean_4", "class_social_mean_4",  "class_learn_mean_4", "sch_math_mean_4", "sch_social_mean_4", "sch_learn_mean_4")
+covars <- colnames[
+  str_detect(colnames, paste(patterns, collapse = "|"))
+]
+formula <- as.formula(paste("p4learn ~ ", paste(patterns, collapse = "+")))
+model <- lm(formula, data = ecls_clean_exp)
+```
+
+
+# Comparative / Distortion Effects 
+```{r}
+formula <- as.formula(paste("t1extern ~ ", paste(patterns, collapse = "+")))
+model <- lm(formula, data = ecls_clean_exp)
+
+
+# Look fo is highly significant, 
+# So is extern? 
+formula <- as.formula(paste("p1learn~ ", paste(patterns, collapse = "+")))
+model <- lm(formula, data = ecls_clean_exp)
+
+summary(model)
+
+# Information Friction # -- Poorer families' perception of children's potential tend to be less realistic / in accordance with teacher perception. 
+
+formula <- as.formula(paste("t2rtlang ~ ", paste(patterns, collapse = "+")))
+model <- lm(formula, data = ecls_clean_exp)
+
+summary(model)
+
+# There is clearly some sort of spillover / local / comparative effect. 
+```
+
+
+
