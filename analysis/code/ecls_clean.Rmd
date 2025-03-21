@@ -442,23 +442,87 @@ balance_df_interval <- balance_df %>%
   ))
   
 # Subset by +- two months before and after the cutoff 
-model <- lm(p1ageent ~ p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + interval, data = balance_df_interval)
-summary(model)
+model_fs_1 <- lm(p1ageent ~ interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl , data = balance_df_interval)
+summary(model_fs_1)
 
+se_fs_1 = sqrt(diag(vcovCL(model_first_stage, cluster = ~ s1_id)))
+
+model_fs_2 <- lm(p1ageent ~ interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 , data = balance_df_interval)
+summary(model_fs_2)
+
+se_fs_2 = sqrt(diag(vcovCL(model_fs_2, cluster = ~ s1_id)))
 # Being above the interval raises your entry month by around 9 months. Consistent with our table / the simple difference in means! 
+
+stargazer(
+  model_fs_1, model_fs_2, 
+  se = list(se_fs_1, se_fs_2), 
+  type = "latex", 
+  title = "First Stage OLS", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean_1"), 
+  add.lines = list(
+    c("SES Control", "Yes", "Yes"), 
+    c("School Math Mean Control", "No", "Yes"), 
+    c("\\hline", "", "")
+  ), 
+  dep.var.labels.include = TRUE,
+  dependent.var.labels = c("Age of Entry (Months)"),
+  covariate.labels = c("birthday past cutoff", "first time kindergartener")
+)
 ```
-# ITT
+# Reduced Form
 ```{r}
-model <- lm(c1r4mscl ~ p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + interval, data = balance_df_interval)
-summary(model)
+model_rf_1 <- lm(c1r4mscl ~ interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl , data = balance_df_interval)
+summary(model_rf_1) 
+
+se_rf_1 <- sqrt(diag(vcovCL(model_rf_1, cluster = ~ s1_id)))
+
+model_rf_2 <- lm(c1r4mscl ~ interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1, data = balance_df_interval)
+
+se_rf_2 <- sqrt(diag(vcovCL(model_rf_2, cluster = ~ s1_id)))
+
+model_rf_3 <- lm(c1r4rscl ~ interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl , data = balance_df_interval)
+summary(model_rf_3) 
+
+se_rf_3 <- sqrt(diag(vcovCL(model_rf_3, cluster = ~ s1_id)))
+
+model_rf_4 <- lm(c1r4rscl ~ interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1, data = balance_df_interval)
+
+se_rf_4 <- sqrt(diag(vcovCL(model_rf_4, cluster = ~ s1_id)))
+
+stargazer(
+  model_rf_1, model_rf_2, model_rf_3, model_rf_4,
+  se = list(se_rf_1, se_rf_2, se_rf_3, se_rf_4), 
+  type = "latex", 
+  title = "Reduced Form OLS", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean_1"), 
+  add.lines = list(
+    c("SES Control", "Yes", "Yes", "Yes", "Yes"), 
+    c("School Math Mean Control", "No", "Yes", "No", "Yes"), 
+    c("\\hline", "", "", "", "")
+  ), 
+  dep.var.labels.include = TRUE,
+  dependent.var.labels = c("Kindergarten Math Score"),
+  covariate.labels = c("birthday past cutoff", "first time kindergartener"), 
+  omit.stat = c("ser")
+)
 ```
 ```{r}
 balance_df_interval <- balance_df_interval %>%
   mutate(
-    s1_id = as.factor(s1_id), 
+    s1_id = as.factor(s1_id),
     w1dadscr = as.numeric(w1dadscr), 
     w1momscr = as.numeric(w1momscr)
   )
+
+#####################
+# IV / TSLS Regression
+#####################
 
 model_iv_math <- ivreg(c1r4mscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 | interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 , data = balance_df_interval)
 
@@ -467,12 +531,12 @@ se_iv_math <- sqrt(diag(vcovCL(model_iv_math, cluster = ~ s1_id)))
 model_iv_reading <- ivreg(c1r4rscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 | interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 , data = balance_df_interval)
 
 se_iv_reading <- sqrt(diag(vcovCL(model_iv_reading, cluster = ~ s1_id)))
-```
 
+#####################
+# OLS Regression
+#####################
 
-# OLS With the Whole Dataset
-```{r}
-model_ols_math <- lm(c1r4mscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1, data = ecls_clean)
+model_ols_math <- lm(c1r4mscl~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1, data = ecls_clean)
 
 se_ols_math <- sqrt(diag(vcovCL(model_ols_math, cluster = ~ s1_id)))
 
@@ -482,46 +546,201 @@ se_ols_reading <- sqrt(diag(vcovCL(model_ols_reading, cluster = ~ s1_id)))
 ```
 
 
+# Automate Regress
 ```{r}
+#####################
+# IV / TSLS Regression
+#####################
+
+run_iv <- function(outcome_var, covar_list) {
+  formula_str <- paste0(
+    outcome_var, 
+    "~", covar_list, "| interval +" , covar_list
+  )
+  
+  model_iv <- ivreg(as.formula(formula_str), data = balance_df_interval)
+  
+  se_iv <- sqrt(diag(vcovCL(model_iv, cluster = ~ s1_id)))
+  
+  return(list(model_iv, se_iv))
+}
+
+covar_list <- "p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1"
+
+model_iv_math <- run_iv("c1r4mscl", covar_list)[[1]]
+se_iv_math <- run_iv("c1r4mscl", covar_list)[[2]]
+
+#####################
+# OLS Regression
+#####################
+
+run_ols <- function(outcome_var, covar_list) {
+  formula_str <- paste0(
+    outcome_var, "~", 
+    covar_list
+  )
+  
+  model_ols <- lm(as.formula(formula_str), data = balance_df_interval)
+  
+  se_ols <- sqrt(diag(vcovCL(model_ols, cluster = ~ s1_id)))
+  
+  return(list(model_ols, se_ols))
+}
+
+model_ols_math <- run_ols("c1r4mscl", covar_list)[[1]]
+se_ols_math <- run_ols("c1r4mscl", covar_list)[[2]]
+```
+
+
+```{r}
+############################
+# OLS / IV Regression Table
+############################
+
 regression_table <- stargazer(model_iv_math, model_ols_math, model_iv_reading, model_ols_reading, 
           se = list(se_iv_math, se_ols_math, se_iv_reading, se_ols_reading), 
           type = "latex", 
           title = "IV and OLS Estimates of Impact of Older Kindergarten Entry on Test Scores",
           out.header = FALSE,
           star.cutoffs = c(0.05), 
-          digits = 3, 
+          digits = 2, 
           omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean"), 
           add.lines = list(
             c("SES Control", "Yes", "Yes", "Yes", "Yes"), 
-            c("School Math Mean control", "Yes", "Yes", "Yes", "Yes")
+            c("School Math Mean control", "Yes", "Yes", "Yes", "Yes"), 
+            c("\\hline", "", "", "", "")
           ), 
           covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
-          dependent.var.labels = c("Math Score", "Reading Score"), 
           column.labels = c("IV", "OLS", "IV", "OLS")
 )
-
-regression_table <- stargazer(model_iv_math, model_ols_math, 
-          se = list(se_iv_math, se_ols_math), 
-          type = "latex", 
-          title = "IV and OLS Estimates of Impact of Older Kindergarten Entry on Test Scores",
-          out.header = FALSE,
-          star.cutoffs = c(0.05), 
-          digits = 3, 
-          omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean"), 
-          add.lines = list(
-            c("SES Control", "Yes", "Yes", "Yes", "Yes"), 
-            c("School Math Mean control", "Yes", "Yes", "Yes", "Yes")
-          ), 
-          covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
-          dependent.var.labels = c("Math Score", "Reading Score", "Math Score", "Reading Score"), 
-          column.labels = c("IV", "OLS", "IV", "OLS")
-)
-
-print(s)
-class(model_ols_reading)
 writeLines(regression_table, file.path(output_path, "regression_table.tex"))
 ```
 
+
+# Fade-out of Math Score Boost over Time 
+```{r}
+############################
+# Math Score Fade-Out
+############################
+
+for (i in 1:7) { 
+  # run model
+  model_output <- run_iv(paste0("c", i, "r4mscl"), covar_list)
+  
+  assign(paste0("model_iv_", i), model_output[[1]])
+  assign(paste0("se_iv_", i), model_output[[2]])
+}
+
+models <- list(model_iv_1, model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7)
+se_list <- list(se_iv_1, se_iv_2, se_iv_3, se_iv_4, se_iv_5, se_iv_6, se_iv_7)
+
+stargazer(
+  models,
+  #model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7, 
+  se = se_list,
+  type = "latex", 
+  title = "Fade-out of Entry Age Effect on Test Scores", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant"), 
+  add.lines = list(
+            c("SES Control", rep("Yes", 7)), 
+            c("School Math Mean control", rep("Yes", 7)), 
+            c("\\hline", rep("", 7))
+          ), 
+  covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
+  column.labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring")
+)
+
+############################
+# Reading Score Fade-Out
+############################
+
+for (i in 1:7) { 
+  # run model
+  model_output <- run_iv(paste0("c", i, "r4rscl"), covar_list)
+  
+  assign(paste0("model_iv_", i), model_output[[1]])
+  assign(paste0("se_iv_", i), model_output[[2]])
+}
+
+models <- list(model_iv_1, model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7)
+se_list <- list(se_iv_1, se_iv_2, se_iv_3, se_iv_4, se_iv_5, se_iv_6, se_iv_7)
+
+stargazer(
+  models,
+  #model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7, 
+  se = se_list,
+  type = "latex", 
+  title = "Fade-out of Entry Age Effect on Test Scores", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant"), 
+  add.lines = list(
+            c("SES Control", rep("Yes", 7)), 
+            c("School Math Mean control", rep("Yes", 7)), 
+            c("\\hline", rep("", 7))
+          ), 
+  covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
+  column.labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring")
+)
+
+############################
+# Graph Fade-out 
+############################
+coef_iv <- rep(0, 7)
+
+coef_df <- data.frame(
+  grade = (1:7), 
+  coef_iv = coef_iv   
+)
+
+for (i in 1:7) {
+  coef_df$coef_iv[i] <- coef(get(paste0("model_iv_", i)))[["p1ageent"]]
+}
+
+coef_df$grade <- factor(coef_df$grade, 
+                        levels = 1:7, 
+                        labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring"))
+
+
+iv_plot <- ggplot(aes(x = grade, y = coef_iv), data = coef_df) + 
+  geom_point(color = "steelblue") + 
+  geom_line(color = "steelblue", aes(group = 1)) + 
+  theme_minimal() + 
+  labs(
+    title = "Effect of Earlier Entry on Math IRT Scores Across Grades", 
+    x = "Data Collection Round", 
+    y = "IV Coefficient" 
+  ) + 
+  theme(
+    axis.text.x = element_text(margin = margin(t = 10)), 
+    axis.title.x = element_text(margin = margin(t = 20))
+    )
+
+ggsave(file.path(output_path, "iv_plot_math.png"), plot = iv_plot, width = 8, height = 5, dpi = 300, bg = "white")
+```
+
+
+```{r}
+model_honors <- run_iv("p7sameag", covar_list)
+model <- model_honors[[1]]
+se <- model_honors[[2]]
+
+
+stargazer(
+  model, 
+  se = list(se),
+  type = "latex", 
+  title = "Fade-out of Entry Age Effect on Test Scores", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant")
+)
+```
 
 ```{r}
 # Huge effect on p4learn and t4interp, learn, extern, 
