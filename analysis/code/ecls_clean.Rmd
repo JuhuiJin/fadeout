@@ -65,7 +65,7 @@ ecls_clean <- ecls_clean %>%
     race_match_k = as.factor(
       b1raceth == w1raceth | (b1raceth == 1) & (w1raceth == 3 | w1raceth == 4)
       )
-  ) 
+  )
 ```
 
 
@@ -343,16 +343,16 @@ balance_df <- ecls_clean %>%
   group_by(entry_rule) %>%
   mutate(
     interval = case_when(
-      when_five <= entry_rule & abs(as.numeric(entry_rule - when_five)) <= 60 ~ "before", 
-      when_five > entry_rule - years(1) & abs(as.numeric(when_five - (entry_rule - years(1)))) <= 60~ "after", 
+      when_five <= entry_rule & abs(as.numeric(entry_rule - when_five)) <= 90 ~ "before", 
+      when_five > entry_rule - years(1) & abs(as.numeric(when_five - (entry_rule - years(1)))) <= 90 ~ "after", 
       TRUE ~ "not_in"
-    )
+    ), 
+    interval = as.factor(interval)
   )
 
 # Add Optionally 
 # when_five > entry_rule & abs(as.numeric(when_five - entry_rule)) <= 60 | 
 
-  
 table <- balance_df %>%
   group_by(interval) %>%
   summarize(
@@ -401,9 +401,8 @@ table_gt <- table %>%
     source_note = "Note: All means are rounded to 2 decimal places and calculated by interval. N represents the number of observations. Importantly, 'After' includes children whose fifth birthdays fall AFTER the entry rule - 1 (could not enroll in the previous year), while 'Before' denotes children who turned 5 within 2 months before the entry rule. 'Mean school math 1' denotes the average math score of peers in the kindergarten eventually enrolled, while 'Mean math 1' denotes the average kindergarten math scores for children in the interval."
   )
 
-print(assmtmm_plot)
-ggsave(file.path(output_path, "assmtmm_plot.png"), plot = assmtmm_plot, width = 8, height = 5, dpi = 300, bg = "white")
-
+print(table_gt)
+gtsave(table_gt, filename = file.path(output_path, "kindergarten_rule_table.png"))
 # Also need to check against (1) When the assessment was administered, and (2) When the schools opened / when the school year started. 
 ```
 
@@ -428,19 +427,99 @@ assmtmm_plot <- ecls_clean %>%
   )
 
 print(assmtmm_plot)
-gtsave(assmtmm_plot, filename = file.path(output_path, "assmtmm_plot.png"))
+ggsave(file.path(output_path, "assmtmm_plot.png"), plot = assmtmm_plot, width = 8, height = 5, dpi = 300, bg = "white")
+
 ```
 
 # First Stage 
 ```{r}
+# Filter for the interval and recode to dummy instrument 
+balance_df_interval <- balance_df %>%
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  ))
+  
 # Subset by +- two months before and after the cutoff 
-model <- lm(p1ageent ~ p1hfamil + w1raceth + w1momed + w1daded + s2mmfive + p1firkdg + sch_math_mean_1, data = jk)
+model <- lm(p1ageent ~ p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + interval, data = balance_df_interval)
 summary(model)
-```
 
+# Being above the interval raises your entry month by around 9 months. Consistent with our table / the simple difference in means! 
+```
 # ITT
 ```{r}
+model <- lm(c1r4mscl ~ p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + interval, data = balance_df_interval)
+summary(model)
+```
+```{r}
+balance_df_interval <- balance_df_interval %>%
+  mutate(
+    s1_id = as.factor(s1_id), 
+    w1dadscr = as.numeric(w1dadscr), 
+    w1momscr = as.numeric(w1momscr)
+  )
 
+model_iv_math <- ivreg(c1r4mscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 | interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 , data = balance_df_interval)
+
+se_iv_math <- sqrt(diag(vcovCL(model_iv_math, cluster = ~ s1_id)))
+
+model_iv_reading <- ivreg(c1r4rscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 | interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 , data = balance_df_interval)
+
+se_iv_reading <- sqrt(diag(vcovCL(model_iv_reading, cluster = ~ s1_id)))
+```
+
+
+# OLS With the Whole Dataset
+```{r}
+model_ols_math <- lm(c1r4mscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1, data = ecls_clean)
+
+se_ols_math <- sqrt(diag(vcovCL(model_ols_math, cluster = ~ s1_id)))
+
+model_ols_reading <- lm(c1r4rscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1, data = ecls_clean)
+
+se_ols_reading <- sqrt(diag(vcovCL(model_ols_reading, cluster = ~ s1_id)))
+```
+
+
+```{r}
+regression_table <- stargazer(model_iv_math, model_ols_math, model_iv_reading, model_ols_reading, 
+          se = list(se_iv_math, se_ols_math, se_iv_reading, se_ols_reading), 
+          type = "latex", 
+          title = "IV and OLS Estimates of Impact of Older Kindergarten Entry on Test Scores",
+          out.header = FALSE,
+          star.cutoffs = c(0.05), 
+          digits = 3, 
+          omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean"), 
+          add.lines = list(
+            c("SES Control", "Yes", "Yes", "Yes", "Yes"), 
+            c("School Math Mean control", "Yes", "Yes", "Yes", "Yes")
+          ), 
+          covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
+          dependent.var.labels = c("Math Score", "Reading Score"), 
+          column.labels = c("IV", "OLS", "IV", "OLS")
+)
+
+regression_table <- stargazer(model_iv_math, model_ols_math, 
+          se = list(se_iv_math, se_ols_math), 
+          type = "latex", 
+          title = "IV and OLS Estimates of Impact of Older Kindergarten Entry on Test Scores",
+          out.header = FALSE,
+          star.cutoffs = c(0.05), 
+          digits = 3, 
+          omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean"), 
+          add.lines = list(
+            c("SES Control", "Yes", "Yes", "Yes", "Yes"), 
+            c("School Math Mean control", "Yes", "Yes", "Yes", "Yes")
+          ), 
+          covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
+          dependent.var.labels = c("Math Score", "Reading Score", "Math Score", "Reading Score"), 
+          column.labels = c("IV", "OLS", "IV", "OLS")
+)
+
+print(s)
+class(model_ols_reading)
+writeLines(regression_table, file.path(output_path, "regression_table.tex"))
 ```
 
 
