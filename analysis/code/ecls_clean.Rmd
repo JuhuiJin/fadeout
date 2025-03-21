@@ -68,8 +68,13 @@ ecls_clean <- ecls_clean %>%
   ) 
 ```
 
+
 # Calculate School Means 
 ```{r}
+###############################
+# 0. Calculate School Means
+###############################
+
 calculate_school_means <- function(data, i, score, type) {
   if (i == 3) {
     s_id <- paste0("s", 4, "_id")
@@ -90,11 +95,7 @@ calculate_school_means <- function(data, i, score, type) {
   
   return(data)
 }
-```
 
-
-# Impact of Parent and Teacher's Positive Distortionary Beliefs
-```{r}
 for (i in 1:7) {
   score <- paste0("c", i, "r4mscl") 
   ecls_clean <- calculate_school_means(ecls_clean, i, score, "math")
@@ -129,9 +130,71 @@ for (i in 1:6) {
 } 
 ```
 
-
-# Age of Entry Instrument 
+# Define Control Variables for Regressions at each Grade Level 
 ```{r}
+# Different data were collected at different rounds of data collection 
+# 2,4,5,6 -- T#RTMTH 
+
+# Grades K-3 Control Vars 
+for (i in c(1,2,4,5,6)) {
+  # Teacher Vars 
+  assign(paste0("tch_eval_", i), c(paste0("t", i, "learn"), paste0("t", i, "extern"), paste0("t", i, "intern"), paste0("t", i, "contro"), paste0("t", i, "interp")))
+  
+  # Class Vars
+  assign(paste0("class_eval_", i), c(paste0("class_math_mean_", i), paste0("class_rdg_mean_", i), paste0("class_interp_mean_", i), paste0("class_learn_mean_", i)))
+  
+  # School Vars
+  assign(paste0("sch_eval_", i), c(paste0("sch_math_mean_", i), paste0("sch_rdg_mean_", i), paste0("sch_social_mean_", i), paste0("sch_learn_mean_", i)))
+}
+
+# Teacher Evaluation in Grade 8
+###########
+# !! Need to update by defining single variable with the second teacher's rating !! 
+###########
+
+assign(paste0("tch_eval_", 7), c("g7relwel", "g7tlkout", "g7honors", "g7wrkhrd", "g7behind", "g7attent", "g7organz"))
+
+# Parent Evals from K-8 Grades 
+for (i in c(1,4,5,6,7)) {
+  # Parent Evaluations 
+  if (i %in% c(1,4)) {
+    assign(paste0("par_eval_", i), c(paste0("p", i, "sameag"), paste0("p", i, "learn"), paste0("p", i, "social"), paste0("p", i, "active")))
+  } else if (i %in% c(5,6,7)) {
+    assign(paste0("par_eval_", i), c(paste0("p", i, "sameag"), paste0("p", i, "active")))
+  }
+}
+
+# Test Evals in every data collection round 
+for (i in 1:7) {
+  # Test Vars 
+  assign(paste0("test_eval_", i), c(paste0("c", i, "r4rscl"), paste0("c", i, "r4mscl"), paste0("c", i, "r4rpf"), paste0("c", i, "r4mpf")))
+}
+
+# Controls for Teacher's Cognitive evaluations from K-8 Grade
+# Depends on what data was collected 
+for (i in c(2,4,5,6,7)) {
+  if (i == 2) {
+    assign(paste0("tch_eval_cog_", i), c(paste0("t", i, "rtmth"), paste0("t", i, "rtlang")))
+  } else if (i %in% c(4,5)) {
+    assign(paste0("tch_eval_cog_", i), c(paste0("t", i, "rtmth"), paste0("t", i, "rtlang"), paste0("t", i, "arsmat"), paste0("t", i, "arslit")))
+  } else if (i == 6) {
+    assign(paste0("tch_eval_cog_", i), c(paste0("m", i, "rtmth"), paste0("g", i, "rtlang"), paste0("t", i, "arsmat"), paste0("t", i, "arslit")))
+  } else if (i == 7) {
+    assign(paste0("tch_eval_cog_", i), c("t7arsmat", "t7arsorl", "t7arssci", "t7arswrt"))
+  }
+}
+
+child_eval_ncog_7 <- c("c7sports", "c7trywt", "c7home", "c7angry", "c7likrd", "c7lonly", "c7flgood", "c7worth", "c7able", "c7stops", "c7noplan", "c7cherpa", "c7sdqint")
+child_eval_cog_7 <- c("c7sdqmtc", "c7sdqrdc")
+```
+
+
+# Age of Entry Instrument (Plots)
+```{r}
+###############################
+# 1.0 Age of Entry (First Stage)
+###############################
+
 # Good Instrument
 plot <- ecls_clean %>%
   filter(s2yyfive == 1996 | s2yyfive == 1997 | s2yyfive == 1998 | s2yyfive == 1999) %>%
@@ -146,229 +209,246 @@ plot <- ecls_clean %>%
   geom_line() + 
   labs(
     x = "Date by which child must turn five", 
-    y = "Mean Kindergarten Entry Age (Months)", 
+    y = "Mean Entry Age (Months)", 
     title = "Kindergarten Age Rules and Entry Age",
     subtitle = "for entering class of 1998-1999"
   ) + 
-  theme_minimal()
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "3 month") + 
+  theme(
+    plot.title = element_text(size = 18),  
+    plot.subtitle = element_text(size = 14),            
+    axis.title.x = element_text(size = 14),            
+    axis.title.y = element_text(size = 14),                 
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),   
+    axis.text.y = element_text(size = 12),          
+    legend.title = element_text(size = 14),          
+    legend.text = element_text(size = 12)    
+  )
 
 print(plot)
 ggsave(file.path(output_path, "kindergarten_entry_age.png"), plot = plot, width = 8, height = 5, dpi = 300, bg = "white")
 
-# Verifying that the 1999 entries are basically bogus past 3
-# How to justify this measurement error? 
-ecls_clean %>%
-  filter(s2yyfive == 1999 & s2mmfive >= 1) %>%
-  filter(p1ageent <= 50) %>%
-  select(s2mmfive, s2yyfive, p1ageent, s1_id)
-
-ecls_clean %>%
-  filter(s2yyfive == 1999 & s2mmfive >= 5) %>%
-  select(s2mmfive, p1ageent) %>%
-  filter(p1ageent <= 56)
+# Scatter by School 
+scatter_plot <- ecls_clean %>%
+  filter(s2yyfive == 1996 | s2yyfive == 1997 | s2yyfive == 1998 | s2yyfive == 1999) %>%
+  mutate(
+    date = as.Date(paste(s2yyfive, s2mmfive, "15", sep = "-"))
+  ) %>%
+  group_by(s1_id) %>%
+  summarize(
+    date = first(date), 
+    mean_ageent = mean(p1ageent, na.rm = T), 
+    n = n()
+  ) %>%
+  ggplot(aes(x = date, y = mean_ageent, size = n)) + 
+  geom_point(color = "steelblue") + 
+  theme_minimal() + 
+  labs(
+    x = "Date by which child must turn five", 
+    y = "Mean Entry Age (Months)",
+    title = "School's Kindergarten Age Rules and Mean Entry Age",
+    subtitle = "For entering class of 1998-1999", 
+    size = "Number of Children"
+  ) + 
+  scale_x_date(date_labels = "%b %Y", date_breaks = "3 month") +
+  theme(
+    plot.title = element_text(size = 18),  
+    plot.subtitle = element_text(size = 14),            
+    axis.title.x = element_text(size = 14),            
+    axis.title.y = element_text(size = 14),                 
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),   
+    axis.text.y = element_text(size = 12),          
+    legend.title = element_text(size = 14),          
+    legend.text = element_text(size = 12)    
+  ) +
+  scale_size_continuous(range = c(1,3)) 
   
+print(scatter_plot) 
+ggsave(file.path(output_path, "kindergarten_rule_scatter.png"), plot = scatter_plot, width = 8, height = 5, dpi = 300, bg = "white")
+
+# Histogram visual 
+histo_plot <- ecls_clean %>%
+  filter(s2yyfive == 1996 | s2yyfive == 1997 | s2yyfive == 1998 | s2yyfive == 1999) %>%
+  mutate(
+    date = as.Date(paste(s2yyfive, s2mmfive, "15", sep = "-"))
+  ) %>%
+  group_by(date) %>%
+  summarize(
+    n_schools = n_distinct(s1_id, na.rm = T)
+  ) %>%
+  ggplot(aes(x = date, y = n_schools)) + 
+  geom_bar(stat = "identity", fill = "steelblue") + 
+  theme_minimal() + 
+  scale_x_date(date_labels = "%b %Y", date_breaks = "3 month") + 
+  labs(
+    x = "Date by which child must turn five", 
+    y = "Number of Schools",
+    title = "Number of Schools by Kindergarten Rule Date",
+    subtitle = "For entering class of 1998-1999"
+  ) + 
+  theme(
+    plot.title = element_text(size = 18),  
+    plot.subtitle = element_text(size = 14),            
+    axis.title.x = element_text(size = 14),            
+    axis.title.y = element_text(size = 14),                 
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),   
+    axis.text.y = element_text(size = 12),          
+    legend.title = element_text(size = 14),          
+    legend.text = element_text(size = 12)    
+  )
+
+print(histo_plot)
+ggsave(file.path(output_path, "kindergarten_rule_histogram.png"), plot = histo_plot, width = 8, height = 5, dpi = 300, bg = "white")
+
+# Table 
+table <- ecls_clean %>%
+  filter(s2mmfive >= 0) %>%
+  filter(s2yyfive >= 0) %>%
+  select(s2mmfive, s2yyfive, p1ageent, s1_id) %>%
+  mutate(
+    entry_rule = paste0(s2yyfive, "-", s2mmfive)
+  ) %>%
+  group_by(entry_rule) %>%
+  summarize(
+    number_of_schools = n_distinct(s1_id)
+  ) %>%
+  gt() %>%
+  tab_options(
+    table.font.size = px(10),   
+    data_row.padding = px(2),  
+    heading.padding = px(4)     
+  )
+
+print(table)
+gtsave(table, filename = file.path(output_path, "kindergarten_rule_table.png"))
+
+# Check NA's 
+check_na(ecls_clean, c("s2"))
 ```
 
-
-
-
-# RD of Students just over the threshold 
+# Age of Entry Instrument (Check Balance)
 ```{r}
-ecls_clean %>%
-  filter(p1ageent >= 0) %>%
-  group_by(s2mmfive) 
+##################################
+# 1.1 Age of Entry (Balance Check)
+##################################
 
-ecls_clean %>%
-  select("dobmm", "dobdd", "dobyy", "p1firkdg", "s2mmfive", "s2ddfive", "s2yyfive", "p1ageent")
-
-jk <- ecls_clean %>%
+balance_df <- ecls_clean %>%
+  filter(if_all(c(s2yyfive, s2mmfive, s2ddfive), ~ . >= 0)) %>%
   mutate(
-    before = case_when(
-      dobmm >= 7 & dobmm <= s2mmfive & dobdd <= s2ddfive ~ 1, 
-      dobmm == s2mmfive & dobdd >= s2ddfive | dobmm > s2mmfive ~ 0, 
-      dobmm <= 7 ~ 7,
-      TRUE ~ NA_real_
+    entry_rule = as.Date(sprintf("%04d-%02d-%02d", s2yyfive, s2mmfive, s2ddfive)), 
+    dob = as.Date(sprintf("%04d-%02d-%02d", dobyy, dobmm, dobdd)), 
+    when_five = dob + years(5)
+  ) %>% 
+  group_by(entry_rule) %>%
+  mutate(
+    interval = case_when(
+      when_five <= entry_rule & abs(as.numeric(entry_rule - when_five)) <= 60 ~ "before", 
+      when_five > entry_rule - years(1) & abs(as.numeric(when_five - (entry_rule - years(1)))) <= 60~ "after", 
+      TRUE ~ "not_in"
+    )
+  )
+
+# Add Optionally 
+# when_five > entry_rule & abs(as.numeric(when_five - entry_rule)) <= 60 | 
+
+  
+table <- balance_df %>%
+  group_by(interval) %>%
+  summarize(
+    "Mean Age of Entry (Months)" = mean(p1ageent, na.rm = T), 
+    "Median Age of Entry (Months)" = quantile(p1ageent, 0.5, na.rm = T), 
+    "Household Income (K Fall)" = mean(wkincome, na.rm = T), 
+    "Household Income (K Spring)" = mean(w1income, na.rm = T), 
+    "Dad Occupation Prestige" = mean(w1dadscr, na.rm = T), 
+    "Mom Occupation Prestige" = mean(w1momscr, na.rm = T), 
+    "Poverty Level" = mean(as.numeric(w1povrty), na.rm = T),
+    "School Math Scores" = mean(sch_math_mean_1, na.rm = T), 
+    "Dad's Level of Education" = mean(as.numeric(w1daded), na.rm = T), 
+    "Mom's Level of Education" = mean(as.numeric(w1momed), na.rm = T), 
+    "Child's Own Math Score" = mean(c1r4mscl, na.rm = T),
+    "N" = n()
+  ) %>%
+  mutate(
+    across(
+      .cols = -c(interval), 
+      .fns = ~ round(.x, 2)
     )
   ) %>%
-  mutate(
-    dob_numeric = dobmm + (dobdd / 12)
-  ) 
-
-# Check balance in kids before and after cutoff 
-jk %>%
-  group_by(before) %>%
-  summarize(
-    mean_ageent = mean(p1ageent, na.rm = T), 
-    med_ageent = quantile(p1ageent, 0.5, na.rm = T), 
-    mean_incomek = mean(wkincome, na.rm = T), 
-    mean_income1 = mean(w1income, na.rm = T), 
-    mean_dadscr = mean(w1dadscr, na.rm = T), 
-    mean_momscr = mean(w1momscr, na.rm = T), 
-    mean_povrty = mean(as.numeric(w1povrty), na.rm = T),
-    mean_school_math = mean(sch_math_mean_1, na.rm = T), 
-    mean_daded = mean(as.numeric(w1daded), na.rm = T), 
-    mean_momed = mean(as.numeric(w1momed), na.rm = T), 
-    mean_math_1 = mean(c1r4mscl, na.rm = T),
-    n = n()
-  )
-
-# The difference-in-means gap between older and younger children shrinks by 8th grade. 
-# Fade-out explained by specific skills / item level measures? 
-
-sum(is.na(ecls_clean$dobyy))
-
-
-# Entry Rules are a
-ecls_clean %>%
-  filter(s2mmfive >= 0) %>%
-  filter(p1ageent >= 0) %>%
-  filter(!is.na(s1_id) & !is.na(s4_id)) %>%
-  filter(s2yyfive == 1998) %>%
-  group_by(s2mmfive) %>%
-  summarize(
-    mean = mean(p1ageent, na.rm = T), 
-    n = n()
+  pivot_longer(
+    cols = -interval,
+    names_to = "variable",
+    values_to = "value"
   ) %>%
-  ggplot(aes(x = s2mmfive, y = mean)) + 
-  geom_line() + 
-  theme_minimal()
-
-# As they should be, birthdates are basically random 
-print(jk)
-
-# Check if you have differential paper 
-
-date = as.Date(paste(s2yyfive, s2mmfive, "01", sep = "-"))
-head(ecls)
-
-
-table(ecls_clean$s2yyfive)
-
-ecls_clean %>%
-  filter(s2yyfive == 1999) %>%
-  summarize(
-    n = n_distinct(s1_id)
+  pivot_wider(
+    names_from = interval, 
+    values_from = value
   )
+
+table_gt <- table %>%
+  gt() %>%
+  tab_header(
+    title = "Balance on Observables for Birthday's falling before or after entry rule (± two months)", 
+    subtitle = "Children who are delayed by close to one year are similar to children who enter early"
+  ) %>%
+  cols_label(
+    variable = "Mean Summary Statistic",
+    before = "Before (≤ 60 days)",
+    after = "After (≤ 60 days)",
+    not_in = "Outside 4-month Window"
+  ) %>%
+  tab_source_note(
+    source_note = "Note: All means are rounded to 2 decimal places and calculated by interval. N represents the number of observations. Importantly, 'After' includes children whose fifth birthdays fall AFTER the entry rule - 1 (could not enroll in the previous year), while 'Before' denotes children who turned 5 within 2 months before the entry rule. 'Mean school math 1' denotes the average math score of peers in the kindergarten eventually enrolled, while 'Mean math 1' denotes the average kindergarten math scores for children in the interval."
+  )
+
+print(assmtmm_plot)
+ggsave(file.path(output_path, "assmtmm_plot.png"), plot = assmtmm_plot, width = 8, height = 5, dpi = 300, bg = "white")
+
+# Also need to check against (1) When the assessment was administered, and (2) When the schools opened / when the school year started. 
 ```
 
-
-# Using School's Required Entry rules as an instrument 
+# Age of Assessment 
 ```{r}
-ecls_clean %>%
-  select(matches("five"))
-
-summary(ecls_clean$s2mmfive)
-
-table(ecls_clean$s2mmfive)
-
-jk <- ecls_clean %>%
-  filter(s2mmfive >= 0) %>%
-  filter(p1ageent >= 0) %>%
-  filter(!is.na(s1_id) & !is.na(s4_id)) %>%
-  group_by(s4_id) %>%
-  mutate(
-    u4schbmm = first(u4schbmm[!is.na(u4schbmm)])
-  ) %>%
-  group_by(s2mmfive, u4schbmm) %>%
+assmtmm_plot <- ecls_clean %>%
+  filter(!is.na(c1asmtmm)) %>%
+  mutate(c1asmtmm = as.Date(paste0("1998-", c1asmtmm, "-01"))) %>%
+  group_by(c1asmtmm) %>%
   summarize(
-    mean = mean(p1ageent, na.rm = T), 
-    n = n()
-  ) 
-
-print(jk)
-
-  ggplot(aes(s2mmfive, y = mean)) + 
-  geom_line() + 
-  theme_minimal()
-
-jk <- ecls_clean %>%
-  select(s4_id, s6_id, s7_id,s5_st_id, s6_st_id) %>%
-  distinct()
-
-ecls_clean %>%
-  filter(s1_id != s4_id) %>%
-  filter(!s1_id %in% jk$s4_id) %>%
-  filter(!is.na(t4_id)) %>%
-  group_by(s1_id, s4_id) %>%
-  summarize(n = n() - sum(is.na(s4_id))) %>%
-  filter(n == 1)
-
-ecls_clean %>%
-  filter(s1_id != s4_id) %>%
-  filter(!s1_id %in% jk$s4_id) %>%
-  group_by(s1_id) %>%
-  summarize(n = n_distinct(s4_id)) %>%
-  filter(n == n() - sum(is.na(s1_id)))
-
-jk %>%
-  ungroup() %>%
-  filter(s2mmfive == 8) %>%
-  filter(u4schbmm >= 0) %>%
-  head()
-
-table(ecls_clean$u4schbmm)
-
-jk <- ecls_clean %>%
-  group_by(s4_id) %>%
-  mutate(
-    u4schbmm = first(u4schbmm[!is.na(u4schbmm)])
+    n = n(), 
+    mean_math = mean(c1r4mscl, na.rm = T)
+  ) %>%
+  ggplot(aes(x = c1asmtmm, y = mean_math, size = n)) + 
+  geom_point(color = "steelblue") + 
+  theme_minimal() + 
+  scale_size_continuous(range = c(3,6)) + 
+  labs(
+    x = "Assesment Month", 
+    y = "Mean Math Score", 
+    title = "Test Scores Increase with Assessment Month"
   )
 
-jk %>%
-  select(s1_id, s4_id, u4schbmm)
-table(jk$u4schbmm)
-
-# 1998 - 1999  S2YYFIVE
-table(jk$s2yyfive)
-
-jk <- ecls_clean %>%
-  filter(s2mmfive >= 0) %>%
-  filter(p1ageent >= 0) %>%
-  filter(!is.na(s1_id) & !is.na(s4_id)) %>%
-  filter(s2yyfive == 1998) %>%
-  group_by(s2mmfive) %>%
-  summarize(
-    mean = mean(p1ageent, na.rm = T), 
-    n = n()
-  ) 
-
-table(ecls_clean$s2yyfive)
-
-# Entry Rules are a Good Instrument!
-ecls_clean %>%
-  filter(s2mmfive >= 0) %>%
-  filter(p1ageent >= 0) %>%
-  filter(!is.na(s1_id) & !is.na(s4_id)) %>%
-  filter(s2yyfive == 1998) %>%
-  group_by(s2mmfive) %>%
-  summarize(
-    mean = mean(p1ageent, na.rm = T), 
-    n = n()
-  ) %>%
-  ggplot(aes(x = s2mmfive, y = mean)) + 
-  geom_line() + 
-  theme_minimal()
-
-
-ggplot(aes(x= s2mmfive, y = mean), data = jk) + 
-  geom_line() + 
-  theme_minimal()
-
-jk <- ecls_clean %>%
-  filter(s2yyfive == 1998) %>%
-  filter(s2mmfive >= 0) %>%
-  mutate(after_7 = as.factor(s2mmfive >= 7)
-  ) 
+print(assmtmm_plot)
+gtsave(assmtmm_plot, filename = file.path(output_path, "assmtmm_plot.png"))
 ```
 
+# First Stage 
+```{r}
+# Subset by +- two months before and after the cutoff 
+model <- lm(p1ageent ~ p1hfamil + w1raceth + w1momed + w1daded + s2mmfive + p1firkdg + sch_math_mean_1, data = jk)
+summary(model)
+```
+
+# ITT
+```{r}
+
+```
 
 
 ```{r}
 # Huge effect on p4learn and t4interp, learn, extern, 
 # And also t6learn! 
 # As well as M6RTMTH 
-model <- lm(p1ageent ~ p1hfamil + w1raceth + w1momed + w1daded + s2mmfive * after_7 + p1firkdg + sch_math_mean_1, data = jk)
-summary(model)
+
 
 model <- lm(p4learn ~ p1hfamil + w1raceth + w1momed + w1daded + s2mmfive * after_7 + p1firkdg + sch_math_mean_1, data = jk)
 summary(model)
@@ -443,34 +523,6 @@ tch_vars <- c("b1behvr", "b1yrskin", "b1yrsch", "b1notcap", "race_match_k")
 
 
 
-```{r}
-for (i in c(1,2,4,5,6)) {
-  # Teacher Vars
-  assign(paste0("tch_eval_", i), c(paste0("t", i, "learn"), paste0("t", i, "extern"), paste0("t", i, "intern"), paste0("t", i, "contro"), paste0("t", i, "difliv")))
-  
-  # Test Vars 
-  assign(paste0("test_eval_", i), c(paste0("c", i, "r4rscl"), paste0("c", i, "r4mscl"), paste0("c", i, "r4rpf"), paste0("c", i, "r4mpf")))
-  
-  # Class Vars 
-  assign(paste0("class_eval_", i), c(paste0("class_math_mean_", i), paste0("class_rdg_mean_", i), paste0("class_interp_mean_", i), paste0("class_learn_mean_", i)))
-  
-  # School Vars 
-  assign(paste0("sch_eval_", i), c(paste0("sch_math_mean_", i), paste0("sch_rdg_mean_", i), paste0("sch_social_mean_", i), paste0("sch_learn_mean_", i)))
-}
-
-for (i in c(1,4,5,6,7)) {
-  # Parent Evaluations 
-  assign(paste0("par_eval_", i), c(paste0("p", i, "sameag"), paste0("p", i, "learn"), paste0("p", i, "social")))
-}
-
-test_eval_7 <- c("c7r4rscl", "c7r4mscl", "c7r2sscl")
-tch_eval_cog_7 <- c("t7arsmat", "t7arsorl", "t7arssci", "t7arswrt")
-tch_eval_ncog_7 <- c("g7wrkhrd", "g7attent", "g7organz", "m7wrkhrd", "m7attent", "n7wrkhrd", "n7attent")
-child_eval_ncog_7 <- c("c7sports", "c7trywt", "c7home", "c7angry", "c7angry", "c7likrd", "c7lonly", "c7flgood", "c7worth", "c7able", "c7stops", "c7noplan", "c7cherpa", "c7sdqint")
-child_eval_cog_7 <- c("c7sdqmtc", "c7sdqrdc")
-par_eval_7 <- c("p7learng")
-par_vars_7 <- c("p7attenp", "p7ofttlk", "p7hmemp")
-```
 
 
 
