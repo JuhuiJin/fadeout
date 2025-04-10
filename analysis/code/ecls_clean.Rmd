@@ -23,6 +23,7 @@ load(file.path(external_path, "ecls/raw_ecls.RData"))
 corrected_ecls <- read_dta(file.path(external_path, "ecls/eclsk_theta_errata.dta"))
 colnames <- sub("_r$", "", colnames(corrected_ecls))
 
+# Factorize Demographic Variables 
 ecls_clean <- ecls %>%
   clean_names() %>%
   left_join(corrected_ecls, by = "childid") %>%
@@ -43,6 +44,48 @@ ecls_clean <- ecls %>%
     across(c(wkraceth, w1raceth, w1povrty, w3povrty, w5povrty, w8povrty, wkdaded, w1daded, w3daded, w5daded, w8daded,wkmomed, w1momed, w3momed, w5momed, w8momed), as.factor)
   ) 
 
+# Unlabel some Variables
+ecls_clean <- ecls_clean %>%
+  mutate(
+    s1_id = as.factor(s1_id),
+    w1dadscr = as.numeric(w1dadscr), 
+    w1momscr = as.numeric(w1momscr), 
+    across(matches("learn|extern|intern|contro|interp|angry|lonly|stops|noplan|clslik|closcl|clostc|enjoy|grdyou|mthgd|engbst|likmth|grdeng|enjrd|enjmth|clsoth|clscar|frover|gofrnd|frout|talk|helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci|frqtlk|ofttlk|tlkfrd|tlkgrd|tlkfut|fitin|wkdone"), 
+           ~as.numeric(.))
+  )
+
+# Fix Negatives to NA's 
+ecls_clean <- ecls_clean %>%
+  mutate(
+    # Fix negatives or zero for t* and p* variables
+    across(
+      matches("^t[1-7](learn|extern|intern|contro|interp)|^p[1-7](sameag|atteni|solve|pronou)$"),
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ),
+    
+    # Fix negatives or zero for grade 7 behavioral/cognitive variables
+    across(
+      matches("^[gntm]7(behind|tlkout|passiv|relwel|disrup|absent|tardy|honors|organz|grammar|gather|wrtvar|style|analyo|creato|attent|orgdat|write|problm|presen|designn|scconc|scprob|talkab|proofs|apply|repres)"),
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ),
+
+    # Fix negatives or zero for grade 6 academic/cognitive variables
+    across(
+      matches("^[gntm]6(alg|rtmth|abil|divide|strat|plcvl|shape|rtlang|promot|speak|raloud|info|rdfln|expost|mltstr|reflwr|rtskil|expln|clssfy|comsc|sciprd|princp)"),
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ), 
+    
+    across(
+      matches("c7(home|angry|likrd|lonly|flgood|worth|able|stops|noplan|closcl|clostc|enjoy|howfar|clslik|grdyou|grdpar|mthgd|likmth|grdeng|enjrd|enjmth|clsoth|clscar|frover|gofrnd|frout|talk)"), 
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ), 
+    
+    across(
+      matches("p[1-7](hlphwk|librar|music|museum|attenp|spank|schlpa|helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci|frqtlk|tlkfrd|tlkgrd|tlkfut)"), 
+      ~ if_else(.x <= 0, NA_real_, .x)
+    )
+  )
+
 # Base Year School 
 school <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_School_STATA.dta")) %>%
   clean_names() %>%
@@ -53,7 +96,11 @@ teacher <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_Teacher_STATA.
 ```
 
 # Further Data Cleaning 
+
 ```{r}
+##########################
+# Define Age at Exam Date
+##########################
 ecls_clean <- ecls_clean %>%
   mutate(
     dob = make_date(year = dobyy, month = dobmm, day = dobdd), 
@@ -73,70 +120,42 @@ ecls_clean <- ecls_clean %>%
     age_test_7 = as.numeric(difftime(test_date_7, dob, units = "days")) / 365.25
   )
 
-ecls_clean <- ecls_clean %>%
-  mutate(
-    # Fix negatives or zero for t* and p* variables
-    across(
-      matches("^t[1-7](learn|extern|intern|contro|interp)|^p[1-7](sameag|atteni|solve|pronou)$"),
-      ~ if_else(.x <= 0, NA_real_, .x)
-    ),
-    
-    # Fix negatives or zero for grade 7 behavioral/cognitive variables
-    across(
-      matches("^[gnt]7(behind|tlkout|passiv|relwel|disrup|absent|tardy|honors|organz|grammar|gather|wrtvar|style|analyo|creato|attent|orgdat|write|problm|presen|designn|scconc|scprob|talkab|proofs|apply|repres)"),
-      ~ if_else(.x <= 0, NA_real_, .x)
-    ),
-
-    # Fix negatives or zero for grade 6 academic/cognitive variables
-    across(
-      matches("^[gnt]6(alg|rtmth|abil|divide|strat|plcvl|shape|rtlang|promot|speak|raloud|info|rdfln|expost|mltstr|reflwr|rtskil|expln|clssfy|comsc|sciprd|princp)"),
-      ~ if_else(.x <= 0, NA_real_, .x)
-    ), 
-    
-    across(
-      matches("c7(home|angry|likrd|lonly|flgood|worth|able|stops|noplan|closcl|clostc|enjoy|howfar|clslik|grdyou|grdpar|mthgd|likmth|grdeng|enjrd|enjmth|clsoth|clscar|frover|gofrnd|frout|talk)"), 
-      ~ if_else(.x <= 0, NA_real_, .x)
-    ), 
-    
-    across(
-      matches("p[1-7](hlphwk|librar|music|museum|attenp|spank)")
-    )
-  )
-
+##########################
+# 8th grade teacher eval
+##########################
 
 ecls_clean <- ecls_clean %>%
   mutate(
-    # 1. Z-score transformation for matching variables
+    # Compute z-scores across all 7th grade teacher vars 
     across(
-      matches("^[gnt]7(behind|tlkout|passiv|relwel|disrup|absent|tardy|honors|organz|grammar|gather|wrtvar|style|analyo|creato|attent|orgdat|write|problm|presen|design|scconc|scprob|talkab|proofs|apply|repres)"), 
+      matches("^[gnt]7(behind|tlkout|passiv|relwel|disrup|absent|tardy|honors|organz|grammar|gather|wrtvar|style|analyo|creato|attent|orgdat|write|problm|presen|design|scconc|scprob|talkab|proofs|apply|repres|wkdone)"), 
       ~ (mean(., na.rm = TRUE) - .) / sd(., na.rm = TRUE), 
       .names = "{.col}_z"
     )
   ) %>%
+  # Flip negative traits 
   mutate(
     across(
-      matches("^[gnt]7(passiv|attent|behind)_z"), 
+      matches("^[gnt]7(passiv|attent|behind|disrup)_z"), 
       ~ -.
     )
   ) 
 
 ecls_clean <- ecls_clean %>%
   mutate(
-    noncog_7 = rowMeans(pick(matches("^[gnm]7(tlkout|relwel|disrup|absent|tardy|passiv|wrkhrd|attent)_z")), na.rm = TRUE),
-    cog_7 = rowMeans(pick(matches("^[gnm]7(behind|organz|grammar|gather|wrtvar|style|analyo|creato|orgdat|write|problm|presen|design|scconc|scprob|talkab|proofs|apply|repres)_z")), na.rm = TRUE)
+    tch_noncog_7 = rowMeans(pick(matches("^[gnm]7(tlkout|relwel|disrup|passiv|wrkhrd|attent|wkdone)_z")), na.rm = TRUE),
+    tch_cog_7 = rowMeans(pick(matches("^[gnm]7(behind|organz|grammar|gather|wrtvar|style|analyo|creato|orgdat|write|problm|presen|design|scconc|scprob|talkab|proofs|apply|repres)_z")), na.rm = TRUE), 
+    tch_g_7 = rowMeans(pick(matches("^[gnm]7(grammar|wrtvar|style|analyo|creato)_z")), na.rm = TRUE)
   )
-```
 
-# 5th grade cog noncog scores 
-```{r}
-ecls_clean <- ecls_clean %>%
-  mutate(
-    s1_id = as.factor(s1_id),
-    w1dadscr = as.numeric(w1dadscr), 
-    w1momscr = as.numeric(w1momscr), 
-    across(matches("learn|extern|intern|contro|interp|angry|lonly|stops|noplan|clslik|closcl|clostc|enjoy|grdyou|mthgd|engbst|likmth|grdeng|enjrd|enjmth|clsoth|clscar|frover|gofrnd|frout|talk"), 
-           ~as.numeric(.))
-  ) %>%
+# Save attendence measures for now 
+# absent|tardy|
+
+##########################
+# 5th grade teacher eval 
+##########################
+
+ecls_clean <- ecls_clean  %>%
   mutate(
     across(
       matches("^[gntm]6(learn|extern|intern|contro|interp|alg|rtmth|abil|divide|strat|plcvl|shape|rtlang|abil|promot|speak|raloud|info|rdfln|expost|mltstr|reflwr|rtskil|expln|clssfy|comsc|sciprd|princp)"), 
@@ -151,14 +170,44 @@ ecls_clean <- ecls_clean %>%
 
 ecls_clean <- ecls_clean %>%
   mutate(
-    noncog_6 = rowMeans(pick(matches("^[t]6(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
-    cog_6 = rowMeans(pick(matches("^[gnm]6(alg|rtmth|abil|divide|strat|plcvl|shape|rtlang|abil|promot|speak|raloud|info|rdfln|expost|mltstr|reflwr|rtskil|expln|clssfy|comsc|sciprd|princp)_z")), na.rm = TRUE)
+    tch_noncog_6 = rowMeans(pick(matches("^[t]6(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_cog_6 = rowMeans(pick(matches("^[gnm]6(alg|rtmth|abil|divide|strat|plcvl|shape|rtlang|abil|promot|speak|raloud|info|rdfln|expost|mltstr|reflwr|rtskil|expln|clssfy|comsc|sciprd|princp)_z")), na.rm = TRUE)
   )
 
+##########################
+# Other grade teacher eval
+##########################
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("^t[1-5](learn|extern|intern|contro|interp|rtmth|rtlang)"), 
+      ~(. -mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+      ), 
+    across(
+      matches("t[1-7](extern|intern)_z"), 
+      ~ -.
+    ), 
+    # Non-Cognitive Measures 
+    tch_noncog_1 = rowMeans(pick(matches("t1(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_noncog_2 = rowMeans(pick(matches("t2(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_noncog_4 = rowMeans(pick(matches("t4(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_noncog_5 = rowMeans(pick(matches("t5(learn|extern|intern|contro|interp)_z")), na.rm = TRUE), 
+    # (Purely) Cognitive Measures 
+    tch_cog_2 = rowMeans(pick(matches("t2(rtlang|rtmth)_z")), na.rm = TRUE), 
+    tch_cog_4 = rowMeans(pick(matches("t4(rtlang|rtmth)_z")), na.rm = TRUE),
+    tch_cog_5 = rowMeans(pick(matches("t5(rtlang|rtmth)_z")), na.rm = TRUE)
+  )
 ```
 
 # Parental Perception 
+
 ```{R}
+##########################
+# Parental Perception
+##########################
+
 ecls_clean <- ecls_clean %>%
   mutate(
     across(
@@ -172,9 +221,35 @@ ecls_clean <- ecls_clean %>%
     par_6 = rowMeans(pick(matches("p6(sameag|atteni|solve|pronou)_z")), na.rm = TRUE),
     par_7 = rowMeans(pick(matches("p7(sameag|atteni|solve|pronou|offers|hlpful)_z")), na.rm = TRUE)
   )
+
+##########################
+# Parental Investment
+##########################
+
+# Divide these by type of investment: 
+# 1. Homework Help investment 
+# 2. Emotional Investment
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("p[1-7](helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci|frqtlk|ofttlk|tlkfrd|tlkgrd|tlkfut)"), 
+      ~ - (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ), 
+    across(
+      matches("p7(helpr|helpm|hlpsci)"),
+      ~ -. 
+    ),
+    par_hw = rowMeans(pick(matches("p7(helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci)_z")), na.rm = TRUE), 
+    par_emot = rowMeans(pick(matches("p7(frqtlk|ofttlk|tlkfrd|tlkgrd|tlkfut)_z")), na.rm = TRUE)
+  )
+
+class(ecls_clean$p7helpr)
 ```
 
 # Child Self-Perception 
+
 ```{r}
 ecls_clean <- ecls_clean %>% 
   mutate(
@@ -207,7 +282,7 @@ ecls_clean <- ecls_clean %>%
       ~ (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
       .names = "{.col}_z"
     ), 
-    child_social_7 = rowMeans(pick(matches("c7(closcl|clostc|enjoy|clslik|clsoth|clscar|frover|gofrnd|frout|talk)_z")), na.rm = T)
+    child_social_7 = rowMeans(pick(matches("c7(fitin|closcl|clostc|enjoy|clslik|clsoth|clscar|frover|gofrnd|frout|talk)_z")), na.rm = T)
   )
 ```
 
@@ -514,6 +589,13 @@ balance_df <- ecls_clean %>%
     ), 
     interval = as.factor(interval)
   )
+
+balance_df_interval <- balance_df %>%
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  )) 
 
 # Add Optionally 
 # when_five > entry_rule & abs(as.numeric(when_five - entry_rule)) <= 60 | 
@@ -896,7 +978,42 @@ ggsave(file.path(output_path, "iv_plot_math.png"), plot = iv_plot, width = 8, he
 balance_df_interval <- balance_df_interval %>%
   mutate(c7_college = as.numeric(c7howfar == 7))
 
-model_honors <- run_iv("p7chlboo", paste0("age_test_7 + ", covar_list))
+balance_df <- ecls_clean %>%
+  filter(if_all(c(s2yyfive, s2mmfive, s2ddfive), ~ . >= 0)) %>%
+  mutate(
+    entry_rule = as.Date(sprintf("%04d-%02d-%02d", s2yyfive, s2mmfive, s2ddfive)), 
+    dob = as.Date(sprintf("%04d-%02d-%02d", dobyy, dobmm, dobdd)), 
+    when_five = dob + years(5)
+  ) %>% 
+  group_by(entry_rule) %>%
+  mutate(
+    interval = case_when(
+      when_five <= entry_rule & abs(as.numeric(entry_rule - when_five)) <= 90 ~ "before", 
+      when_five > entry_rule - years(1) & abs(as.numeric(when_five - (entry_rule - years(1)))) <= 90 ~ "after", 
+      TRUE ~ "not_in"
+    ), 
+    interval = as.factor(interval)
+  )
+
+balance_df_interval <- balance_df %>%
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  )) 
+
+balance_df_interval <- balance_df_interval %>%
+  filter(
+    w1raceth == 1
+  )
+
+covar_list <- "p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_7"
+
+# + sch_math_mean_1 + sch_rdg_mean_1 + p1firkdg + 
+
+covar_list <- "p1hfamil + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_ageent_mean_1"
+
+model_honors <- run_iv("c4r4mscl", paste0("age_test_7 +", covar_list))
 model <- model_honors[[1]]
 se <- model_honors[[2]]
 
@@ -908,11 +1025,43 @@ stargazer(
   out.header = FALSE, 
   star.cutoffs = c(0.05), 
   digits = 2, 
-  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant")
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "Constant")
 )
+```
 
-ecls_clean %>%
-  dplyr::select(matches("hlphwk"))
+# Similar peer age 
+
+```{R}
+ggplot(ecls_new_clean_exp) + 
+  geom_histogram(aes(x = x1ageent), bins = 50)
+
+
+bala
+ggplot(data = balance_df_interval %>%
+         group_by(interval) %>%
+         summarize(
+           hs = mean(as.numeric(c7howfar == 2), na.rm = TRUE), 
+           cc = mean(as.numeric(c7howfar == 3), na.rm = TRUE), 
+           college = mean(as.numeric(c7howfar == 5), na.rm = TRUE), 
+           masters = mean(as.numeric(c7howfar == 6), na.rm = TRUE), 
+           phd = mean(as.numeric(c7howfar == 7), na.rm = TRUE)
+         )) + 
+  geom_line(aes(x = interval, y = hs , color = "hs")) + 
+  geom_line(aes(x = interval, y = cc, color = "cc")) + 
+  geom_line(aes(x = interval, y = college, color = "college")) + 
+  geom_line(aes(x = interval, y = masters, color = "masters")) + 
+  geom_line(aes(x = interval, y = phd, color = "phd")) + 
+  theme_minimal()
+
+ggplot(data = balance_df_interval %>%
+         group_by(interval) %>%
+         summarize(
+           math = mean(as.numeric(c7sports), na.rm = TRUE)
+         )) + 
+  geom_line(aes(x = interval, y = math , color = "hs")) +
+  theme_minimal()
+
+
 ```
 
 ```{r}
@@ -929,7 +1078,7 @@ run_ols <- function(outcome_var, covar_list) {
   return(list(model_ols, se_ols))
 }
 
-ma <- run_ols("c7howfar", paste0("age_test_7+", covar_list))[[1]]
+ma <- run_ols("par_hw", paste0("age_test_7+", covar_list))[[1]]
 summary(ma)
 
 # 0.17
