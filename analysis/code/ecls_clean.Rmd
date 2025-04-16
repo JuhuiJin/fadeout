@@ -5,6 +5,7 @@ date: "2025-03-10"
 ---
 
 # ECLS-K 
+
 ```{r} 
 source("../../setup/external.R")
 output_path <- "../output/"
@@ -22,11 +23,12 @@ load(file.path(external_path, "ecls/raw_ecls.RData"))
 corrected_ecls <- read_dta(file.path(external_path, "ecls/eclsk_theta_errata.dta"))
 colnames <- sub("_r$", "", colnames(corrected_ecls))
 
+# Factorize Demographic Variables 
 ecls_clean <- ecls %>%
   clean_names() %>%
   left_join(corrected_ecls, by = "childid") %>%
-  select(-setdiff(colnames, "childid"))  %>% # Get rid of incorrect thetas
-  select(where(~ !all(is.na(.) | . == -2 | . == -9))) %>% # Omit Suppressed Columns
+  dplyr::select(-all_of(setdiff(colnames, "childid")))  %>% # Get rid of incorrect thetas
+  dplyr::select(where(~ !all(is.na(.) | . == -2 | . == -9))) %>% # Omit Suppressed Columns
   mutate( 
     # Factorize and NA Demographic Variables 
     p1ageent = if_else(p1ageent <= 0, NA, p1ageent), 
@@ -40,6 +42,48 @@ ecls_clean <- ecls %>%
       ~ if_else(.x <= 0, NA_real_, .x)
     ), 
     across(c(wkraceth, w1raceth, w1povrty, w3povrty, w5povrty, w8povrty, wkdaded, w1daded, w3daded, w5daded, w8daded,wkmomed, w1momed, w3momed, w5momed, w8momed), as.factor)
+  ) 
+
+# Unlabel some Variables
+ecls_clean <- ecls_clean %>%
+  mutate(
+    s1_id = as.factor(s1_id),
+    w1dadscr = as.numeric(w1dadscr), 
+    w1momscr = as.numeric(w1momscr), 
+    across(matches("learn|extern|intern|contro|interp|angry|lonly|stops|noplan|clslik|closcl|clostc|enjoy|grdyou|mthgd|engbst|likmth|grdeng|enjrd|enjmth|clsoth|clscar|frover|gofrnd|frout|talk|helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci|frqtlk|ofttlk|tlkfrd|tlkgrd|tlkfut|fitin|wkdone"), 
+           ~as.numeric(.))
+  )
+
+# Fix Negatives to NA's 
+ecls_clean <- ecls_clean %>%
+  mutate(
+    # Fix negatives or zero for t* and p* variables
+    across(
+      matches("^t[1-7](learn|extern|intern|contro|interp)|^p[1-7](sameag|atteni|solve|pronou)$"),
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ),
+    
+    # Fix negatives or zero for grade 7 behavioral/cognitive variables
+    across(
+      matches("^[gntm]7(behind|tlkout|passiv|relwel|disrup|absent|tardy|honors|organz|grammar|gather|wrtvar|style|analyo|creato|attent|orgdat|write|problm|presen|designn|scconc|scprob|talkab|proofs|apply|repres|effo|imprv|clasp|behav|cmphw)"),
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ),
+
+    # Fix negatives or zero for grade 6 academic/cognitive variables
+    across(
+      matches("^[gntm]6(alg|rtmth|abil|divide|strat|plcvl|shape|rtlang|promot|speak|raloud|info|rdfln|expost|mltstr|reflwr|rtskil|expln|clssfy|comsc|sciprd|princp)"),
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ), 
+    
+    across(
+      matches("c7(home|angry|likrd|lonly|flgood|worth|able|stops|noplan|closcl|clostc|enjoy|howfar|clslik|grdyou|grdpar|mthgd|likmth|grdeng|enjrd|enjmth|clsoth|clscar|frover|gofrnd|frout|talk|sports|club|arts|music|clslik|clostc|mthgd|likmth|grdeng|enjrd|enjmth|frover|grdyou|grdpar|talk)"), 
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ), 
+    
+    across(
+      matches("p[1-7](hlphwk|librar|music|museum|attenp|spank|schlpa|helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci|frqtlk|tlkfrd|tlkgrd|tlkfut)"), 
+      ~ if_else(.x <= 0, NA_real_, .x)
+    )
   )
 
 # Base Year School 
@@ -51,7 +95,253 @@ teacher <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_Teacher_STATA.
   clean_names()
 ```
 
+# Further Data Cleaning 
+
+```{r}
+##########################
+# Define Age at Exam Date
+##########################
+ecls_clean <- ecls_clean %>%
+  mutate(
+    dob = make_date(year = dobyy, month = dobmm, day = dobdd), 
+    test_date_1 = make_date(year = c1asmtyy, month = c1asmtmm, day = c1asmtdd), 
+    test_date_2 = make_date(year = c2asmtyy, month = c2asmtmm, day = c2asmtdd),
+    test_date_3 = make_date(year = c3asmtyy, month = c3asmtmm, day = c3asmtdd),
+    test_date_4 = make_date(year = c4asmtyy, month = c4asmtmm, day = c4asmtdd),
+    test_date_5 = make_date(year = c5asmtyy, month = c5asmtmm, day = c5asmtdd),
+    test_date_6 = make_date(year = c6asmtyy, month = c6asmtmm, day = c6asmtdd), 
+    test_date_7 = make_date(year = c7asmtyy, month = c7asmtmm, day = c7asmtdd),
+    age_test_1 = as.numeric(difftime(test_date_1, dob, units = "days")) / 365.25, 
+    age_test_2 = as.numeric(difftime(test_date_2, dob, units = "days")) / 365.25, 
+    age_test_3 = as.numeric(difftime(test_date_3, dob, units = "days")) / 365.25, 
+    age_test_4 = as.numeric(difftime(test_date_4, dob, units = "days")) / 365.25, 
+    age_test_5 = as.numeric(difftime(test_date_5, dob, units = "days")) / 365.25, 
+    age_test_6 = as.numeric(difftime(test_date_6, dob, units = "days")) / 365.25, 
+    age_test_7 = as.numeric(difftime(test_date_7, dob, units = "days")) / 365.25
+  )
+
+##########################
+# 8th grade teacher eval
+##########################
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    # Compute z-scores across all 7th grade teacher vars 
+    across(
+      matches("^[gnt]7(behind|tlkout|passiv|relwel|disrup|absent|tardy|honors|organz|grammar|gather|wrtvar|style|analyo|creato|attent|orgdat|write|problm|presen|design|scconc|scprob|talkab|proofs|apply|repres|wkdone)"), 
+      ~ (mean(., na.rm = TRUE) - .) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    )
+  ) %>%
+  # Flip negative traits 
+  mutate(
+    across(
+      matches("^[gnt]7(passiv|attent|behind|disrup)_z"), 
+      ~ -.
+    )
+  ) 
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    tch_noncog_7 = rowMeans(pick(matches("^[gnm]7(tlkout|relwel|disrup|passiv|wrkhrd|attent|wkdone)_z")), na.rm = TRUE),
+    tch_cog_7 = rowMeans(pick(matches("^[gnm]7(behind|organz|grammar|gather|wrtvar|style|analyo|creato|orgdat|presen$|design$|scconc|scprob|talkab|proofs|apply|repres)_z")), na.rm = TRUE), 
+    #tch_eng_nongcog_7 = rowMeans(pick(matches("g7(tlkout|relwel|disrup|passiv|wrkhrd|attent|wkdone)_z")), na.rm = TRUE), 
+    #tch_mth_noncog_7 = rowMeans(pick(matches("m7(tlkout|relwel|disrup|passiv|wrkhrd|attent|wkdone)_z")), na.rm = TRUE), 
+    #tch_sci_noncog_7 = rowMeans(pick(matches("n7(tlkout|relwel|disrup|passiv|wrkhrd|attent|wkdone)_z")), na.rm  = TRUE), 
+    #tch_eng_cog_7 = rowMeans(pick(matches("g7(organz|grammar|gather|wrtvar|style|analyo|creato)_z")), na.rm = TRUE), 
+    #tch_sci_cog_7 = rowMeans(pick(matches("n7(orgdat|presen$|design$|scconc|scprob)_z")), na.rm = TRUE), 
+    #tch_mth_cog_7 = rowMeans(pick(matches("m7(talkab|proofs|apply|repres)_z")), na.rm = TRUE)
+    #tch_cog_7 = rowMeans(pick(matches("^[gnm]7(grammar|wrtvar|style|analyo|creato)_z")), na.rm = TRUE)
+  )
+
+# Save attendence measures for now 
+# absent|tardy|
+
+##########################
+# 5th grade teacher eval 
+##########################
+
+ecls_clean <- ecls_clean  %>%
+  mutate(
+    across(
+      matches("^[gntm]6(learn|extern|intern|contro$|interp$|alg|rtmth|divide|strat|plcvl|shape|rtlang|speak$|raloud|info$|rdfln|expost|mltstr|reflwr|rtskil|expln|clssfy|comsc|sciprd|princp)"), 
+      ~(. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ),
+    across(
+      matches("t6extern_z|t6intern_z"), 
+      ~ -.
+    )
+  )
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    tch_noncog_6 = rowMeans(pick(matches("^[t]6(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_cog_6 = rowMeans(pick(matches("^[gnm]6(rtlang|rtmth|rtskil)_z")), na.rm = TRUE)
+    # speak$|raloud|info$|rdfln|expost|mltstr|reflwr
+    #tch_eng_cog_6 = rowMeans(pick(matches("g6(speak|raloud|info|rdfln|expost|mltstr|reflwr)_z"))), 
+    #tch_mth_cog_6 = rowMeans(pick(matches("m6(alg|rtmth|abil|divide|strat|plcvl|shape)_z")), na.rm = TRUE), 
+    #tch_sci_cog_6 = rowMeans(pick(matches("n6(rtskil|expln|clssfy|comsc|sciprd|princp)_z")), na.rm = TRUE)
+    #tch_cog_6 = rowMeans(pick(matches("^[gnm]^(alg|rtmth|divide|strat|plcvl|rtlang|speak|info|rdfln|expost|mltstr|reflwr)")))
+    #tch_cog_6 = rowMeans(pick(matches("^[gnm]6(rtmath|rtlang|rtskil)")))
+  )
+
+
+ecls_clean %>%
+  dplyr::select(matches("speak"))
+```
+
+
+```{r}
+##########################
+# Other grade teacher eval
+##########################
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("^t[1-5](learn|extern|intern|contro|interp|rtmth|rtlang)"), 
+      ~(. -mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+      ),
+    across(
+      matches("t[1-7](extern|intern)_z"), 
+      ~ -.
+    ), 
+    # Non-Cognitive Measures 
+    tch_noncog_1 = rowMeans(pick(matches("t1(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_noncog_2 = rowMeans(pick(matches("t2(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_noncog_4 = rowMeans(pick(matches("t4(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_noncog_5 = rowMeans(pick(matches("t5(learn|extern|intern|contro|interp)_z")), na.rm = TRUE), 
+    # (Purely) Cognitive Measures 
+    tch_cog_2 = rowMeans(pick(matches("t2(rtlang|rtmth)_z")), na.rm = TRUE), 
+    tch_cog_4 = rowMeans(pick(matches("t4(rtlang|rtmth)_z")), na.rm = TRUE),
+    tch_cog_5 = rowMeans(pick(matches("t5(rtlang|rtmth)_z")), na.rm = TRUE)
+  )
+```
+
+# Parental Perception 
+
+```{R}
+##########################
+# Parental Perception
+##########################
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("p[1-7](sameag|atteni|solve|pronou|hlpful|offers)"), 
+      ~ - (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ),
+    par_1 = rowMeans(pick(matches("p1(sameag|atteni|solve|pronou)_z")), na.rm = TRUE),
+    par_4 = rowMeans(pick(matches("p4(sameag|atteni|solve|pronou)_z")), na.rm = TRUE),
+    par_5 = rowMeans(pick(matches("p5(sameag|atteni|solve|pronou)_z")), na.rm = TRUE),
+    par_6 = rowMeans(pick(matches("p6(sameag|atteni|solve|pronou)_z")), na.rm = TRUE),
+    par_7 = rowMeans(pick(matches("p7(sameag|atteni|solve|pronou|offers|hlpful)_z")), na.rm = TRUE)
+  )
+
+##########################
+# Parental Investment
+##########################
+
+# Divide these by type of investment: 
+# 1. Homework Help investment 
+# 2. Emotional Investment
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("p[1-7](helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci|frqtlk|ofttlk|tlkfrd|tlkgrd|tlkfut)"), 
+      ~ - (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ), 
+    across(
+      matches("p7(helpr|helpm|hlpsci)"),
+      ~ -. 
+    ),
+    par_hw = rowMeans(pick(matches("p7(helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci)_z")), na.rm = TRUE), 
+    par_emot = rowMeans(pick(matches("p7(frqtlk|ofttlk|tlkfrd|tlkgrd|tlkfut)_z")), na.rm = TRUE)
+  )
+```
+
+# Child Self-Perception 
+
+```{r}
+ecls_clean <- ecls_clean %>% 
+  mutate(
+    across(
+      matches("c7(angry|lonly|flgood|worth|able|stops|noplan|useles|satisf|noprd|wryhng|nocntr)"), 
+      ~ (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ), 
+    across(
+      matches("c7(lonly|angry|stops|noplan|useles|noprd|wryhng|nocntr)_z"), 
+      ~ -. 
+    ), 
+    child_emot_7 = rowMeans(pick(matches("c7(angry|lonly|flgood|worth|able|useles|stops|noplan|useles|satisf|wryhng|nocntr)_z")), na.rm = TRUE)
+  )
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("c7(grdyou|c7mthgd|likmth|grdeng|enjrd|enjmth)"),       
+      ~ (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ), 
+    child_acad_7 = rowMeans(pick(matches("c7(grdyou|engbst|likmth|grdeng|enjrd|enjmth)_z")), na.rm = TRUE)
+  )
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("c7(closcl|clostc|enjoy|clslik|clsoth|clscar|frover|gofrnd|frout|talk)"),
+      ~ (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ), 
+    child_social_7 = rowMeans(pick(matches("c7(fitin|closcl|clostc|enjoy|clslik|clsoth|clscar|frover|gofrnd|frout|talk)_z")), na.rm = T)
+  )
+```
+
+
+# Make 
+```{r}
+balance_df <- ecls_clean %>%
+  filter(if_all(c(s2yyfive, s2mmfive, s2ddfive), ~ . >= 0)) %>%
+  mutate(
+    entry_rule = as.Date(sprintf("%04d-%02d-%02d", s2yyfive, s2mmfive, s2ddfive)), 
+    dob = as.Date(sprintf("%04d-%02d-%02d", dobyy, dobmm, dobdd)), 
+    when_five = dob + years(5)
+  ) %>% 
+  group_by(entry_rule) %>%
+  mutate(
+    interval = case_when(
+      when_five <= entry_rule & abs(as.numeric(entry_rule - when_five)) <= 60 ~ "before", 
+      when_five > entry_rule - years(1) & abs(as.numeric(when_five - (entry_rule - years(1)))) <= 60 ~ "after", 
+      TRUE ~ "not_in"
+    ), 
+    interval = as.factor(interval)
+  )
+
+balance_df_interval <- balance_df %>%
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  )) 
+
+for (i in 1:7) {
+  score <- paste0("c", i, "r4mscl") 
+  ecls_clean <- calculate_school_means(ecls_clean, i, score, "math")
+  
+  score <- paste0("c", i, "r4rscl") 
+  ecls_clean <- calculate_school_means(ecls_clean, i, score, "rdg")
+}
+```
+
+
 # Teacher Race
+
 ```{r}
 ecls_clean <- ecls_clean %>%
   mutate(
@@ -69,7 +359,8 @@ ecls_clean <- ecls_clean %>%
 ```
 
 
-# Calculate School Means 
+# Calculate School Means
+
 ```{r}
 ###############################
 # 0. Calculate School Means
@@ -112,13 +403,18 @@ for (i in c(1,2,4,5,6)) {
   ecls_clean <- calculate_school_means(ecls_clean, i, score, "learn")
 }
 
+for (i in c(1,2,4,5,6)) {
+  score <- paste0("delta_", i, i+1)
+  ecls_clean <- calculate_school_means(ecls_clean, i, score, "math")
+}
+
 ecls_clean <- ecls_clean %>%
   mutate(
-    delta_12 = c2r4mscl - c1r4mscl, 
-    delta_23 = c3r4mscl - c2r4mscl, 
-    delta_34 = c4r4mscl - c3r4mscl, 
-    delta_45 = c5r4mscl - c4r4mscl, 
-    delta_56 = c6r4mscl - c5r4mscl, 
+    delta_12 = c2r4mscl - c1r4mscl,
+    delta_23 = c3r4mscl - c2r4mscl,
+    delta_34 = c4r4mscl - c3r4mscl,
+    delta_45 = c5r4mscl - c4r4mscl,
+    delta_56 = c6r4mscl - c5r4mscl,
     delta_67 = c7r4mscl - c6r4mscl
   )
 
@@ -127,10 +423,11 @@ for (i in 1:6) {
   
   score <- paste0("delta_", i, i+1)
   ecls_clean <- calculate_school_means(ecls_clean, i, score, score)
-} 
+}
 ```
 
 # Define Control Variables for Regressions at each Grade Level 
+
 ```{r}
 # Different data were collected at different rounds of data collection 
 # 2,4,5,6 -- T#RTMTH 
@@ -189,7 +486,8 @@ child_eval_cog_7 <- c("c7sdqmtc", "c7sdqrdc")
 ```
 
 
-# Age of Entry Instrument (Plots)
+# Age of Entry Instrument (Plots) 
+
 ```{r}
 ###############################
 # 1.0 Age of Entry (First Stage)
@@ -327,28 +625,12 @@ gtsave(table, filename = file.path(output_path, "kindergarten_rule_table.png"))
 check_na(ecls_clean, c("s2"))
 ```
 
-# Age of Entry Instrument (Check Balance)
+# Descriptive Tables and Graphs 
+
 ```{r}
 ##################################
 # 1.1 Age of Entry (Balance Check)
 ##################################
-
-balance_df <- ecls_clean %>%
-  filter(if_all(c(s2yyfive, s2mmfive, s2ddfive), ~ . >= 0)) %>%
-  mutate(
-    entry_rule = as.Date(sprintf("%04d-%02d-%02d", s2yyfive, s2mmfive, s2ddfive)), 
-    dob = as.Date(sprintf("%04d-%02d-%02d", dobyy, dobmm, dobdd)), 
-    when_five = dob + years(5)
-  ) %>% 
-  group_by(entry_rule) %>%
-  mutate(
-    interval = case_when(
-      when_five <= entry_rule & abs(as.numeric(entry_rule - when_five)) <= 90 ~ "before", 
-      when_five > entry_rule - years(1) & abs(as.numeric(when_five - (entry_rule - years(1)))) <= 90 ~ "after", 
-      TRUE ~ "not_in"
-    ), 
-    interval = as.factor(interval)
-  )
 
 # Add Optionally 
 # when_five > entry_rule & abs(as.numeric(when_five - entry_rule)) <= 60 | 
@@ -407,6 +689,7 @@ gtsave(table_gt, filename = file.path(output_path, "kindergarten_rule_table.png"
 ```
 
 # Age of Assessment 
+
 ```{r}
 assmtmm_plot <- ecls_clean %>%
   filter(!is.na(c1asmtmm)) %>%
@@ -428,10 +711,45 @@ assmtmm_plot <- ecls_clean %>%
 
 print(assmtmm_plot)
 ggsave(file.path(output_path, "assmtmm_plot.png"), plot = assmtmm_plot, width = 8, height = 5, dpi = 300, bg = "white")
-
 ```
 
+# F-Test 
+
+```{R}
+library(broom)
+covariates <- c("wkincome", "w1income", "w1daded", "w1momed", "w1dadscr", "w1momscr", "sch_math_mean_1")
+
+check <- balance_df %>%
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  )) 
+
+check <- check %>%
+  mutate(w1pared = as.numeric(w1pared))
+
+f_test <- lm(interval ~ wkincome + w1income + w1pared + w1raceth + w1dadscr + w1momscr + sch_math_mean_1 + sch_rdg_mean_1, data = check)
+summary(f_test)
+
+se <- sqrt(diag(vcov(f_test, cluster = ~s1_id)))
+
+stargazer(
+  f_test,
+  se = list(se), 
+  type = "latex", 
+  title = "First Stage OLS", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  dep.var.labels.include = TRUE,
+  dependent.var.labels = c("Age of Entry (Months)")
+)
+```
+
+
 # First Stage 
+
 ```{r}
 # Filter for the interval and recode to dummy instrument 
 balance_df_interval <- balance_df %>%
@@ -439,7 +757,7 @@ balance_df_interval <- balance_df %>%
   mutate(interval = case_when(
     interval == "before" ~ 0, 
     interval == "after" ~ 1
-  ))
+  )) 
   
 # Subset by +- two months before and after the cutoff 
 model_fs_1 <- lm(p1ageent ~ interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl , data = balance_df_interval)
@@ -472,7 +790,9 @@ stargazer(
   covariate.labels = c("birthday past cutoff", "first time kindergartener")
 )
 ```
-# Reduced Form
+
+# Reduced Form 
+
 ```{r}
 model_rf_1 <- lm(c1r4mscl ~ interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl , data = balance_df_interval)
 summary(model_rf_1) 
@@ -494,7 +814,7 @@ se_rf_4 <- sqrt(diag(vcovCL(model_rf_4, cluster = ~ s1_id)))
 
 stargazer(
   model_rf_1, model_rf_2, model_rf_3, model_rf_4,
-  se = list(se_rf_1, se_rf_2, se_rf_3, se_rf_4), 
+  se = list(se_rf_1, se_rf_2, se_rf_3, se_rf_4),
   type = "latex", 
   title = "Reduced Form OLS", 
   out.header = FALSE, 
@@ -512,23 +832,19 @@ stargazer(
   omit.stat = c("ser")
 )
 ```
-```{r}
-balance_df_interval <- balance_df_interval %>%
-  mutate(
-    s1_id = as.factor(s1_id),
-    w1dadscr = as.numeric(w1dadscr), 
-    w1momscr = as.numeric(w1momscr)
-  )
 
+
+
+```{r}
 #####################
 # IV / TSLS Regression
 #####################
 
-model_iv_math <- ivreg(c1r4mscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 | interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 , data = balance_df_interval)
+model_iv_math <- ivreg(c1r4mscl ~ age_test_1 + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 | interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 , data = balance_df_interval)
 
 se_iv_math <- sqrt(diag(vcovCL(model_iv_math, cluster = ~ s1_id)))
 
-model_iv_reading <- ivreg(c1r4rscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 | interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 , data = balance_df_interval)
+model_iv_reading <- ivreg(c1r4rscl ~ age_test_1 + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 | interval + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1 , data = balance_df_interval)
 
 se_iv_reading <- sqrt(diag(vcovCL(model_iv_reading, cluster = ~ s1_id)))
 
@@ -536,60 +852,15 @@ se_iv_reading <- sqrt(diag(vcovCL(model_iv_reading, cluster = ~ s1_id)))
 # OLS Regression
 #####################
 
-model_ols_math <- lm(c1r4mscl~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1, data = ecls_clean)
+model_ols_math <- lm(c1r4mscl~ age_test_1 + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1, data = ecls_clean)
 
 se_ols_math <- sqrt(diag(vcovCL(model_ols_math, cluster = ~ s1_id)))
 
-model_ols_reading <- lm(c1r4rscl ~ p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1, data = ecls_clean)
+model_ols_reading <- lm(c1r4rscl ~ age_test_1 + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_rdg_mean_1, data = ecls_clean)
 
 se_ols_reading <- sqrt(diag(vcovCL(model_ols_reading, cluster = ~ s1_id)))
 ```
 
-
-# Automate Regress
-```{r}
-#####################
-# IV / TSLS Regression
-#####################
-
-run_iv <- function(outcome_var, covar_list) {
-  formula_str <- paste0(
-    outcome_var, 
-    "~", covar_list, "| interval +" , covar_list
-  )
-  
-  model_iv <- ivreg(as.formula(formula_str), data = balance_df_interval)
-  
-  se_iv <- sqrt(diag(vcovCL(model_iv, cluster = ~ s1_id)))
-  
-  return(list(model_iv, se_iv))
-}
-
-covar_list <- "p1ageent + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_math_mean_1"
-
-model_iv_math <- run_iv("c1r4mscl", covar_list)[[1]]
-se_iv_math <- run_iv("c1r4mscl", covar_list)[[2]]
-
-#####################
-# OLS Regression
-#####################
-
-run_ols <- function(outcome_var, covar_list) {
-  formula_str <- paste0(
-    outcome_var, "~", 
-    covar_list
-  )
-  
-  model_ols <- lm(as.formula(formula_str), data = balance_df_interval)
-  
-  se_ols <- sqrt(diag(vcovCL(model_ols, cluster = ~ s1_id)))
-  
-  return(list(model_ols, se_ols))
-}
-
-model_ols_math <- run_ols("c1r4mscl", covar_list)[[1]]
-se_ols_math <- run_ols("c1r4mscl", covar_list)[[2]]
-```
 
 
 ```{r}
@@ -603,132 +874,227 @@ regression_table <- stargazer(model_iv_math, model_ols_math, model_iv_reading, m
           title = "IV and OLS Estimates of Impact of Older Kindergarten Entry on Test Scores",
           out.header = FALSE,
           star.cutoffs = c(0.05), 
-          digits = 2, 
+          digits = 5, 
           omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean"), 
           add.lines = list(
             c("SES Control", "Yes", "Yes", "Yes", "Yes"), 
             c("School Math Mean control", "Yes", "Yes", "Yes", "Yes"), 
             c("\\hline", "", "", "", "")
           ), 
-          covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
+          covariate.labels = c("Age of Entry (Months)"), 
           column.labels = c("IV", "OLS", "IV", "OLS")
 )
 writeLines(regression_table, file.path(output_path, "regression_table.tex"))
 ```
 
+# Automate Regress 
+
+```{r}
+#####################
+# IV / TSLS Regression
+#####################
+
+run_iv <- function(outcome_var, covar_list, df, cluster_str) {
+  formula_str <- paste0(
+    outcome_var, 
+    "~", covar_list, "| interval +" , covar_list
+  )
+  
+  cluster <- reformulate(cluster_str)
+  
+  model_iv <- ivreg(as.formula(formula_str), data = df)
+  
+  se_iv <- sqrt(diag(vcovCL(model_iv, cluster = cluster)))
+  
+  return(list(model_iv, se_iv))
+}
+
+covar_list <- "p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl"
+
+model_iv_math <- run_iv("c1r4mscl", covar_list)[[1]]
+se_iv_math <- run_iv("c1r4mscl", covar_list)[[2]]
+
+#####################
+# OLS Regression
+#####################
+
+run_ols <- function(outcome_var, covar_list, df) {
+  formula_str <- paste0(
+    outcome_var, "~", 
+    covar_list
+  )
+  
+  model_ols <- lm(as.formula(formula_str), data = df)
+  
+  se_ols <- sqrt(diag(vcovCL(model_ols, cluster = ~ s1_id)))
+  
+  return(list(model_ols, se_ols))
+}
+
+model_ols_math <- run_ols("g7honors", covar_list)[[1]]
+se_ols_math <- run_ols("c1r4mscl", covar_list)[[2]]
+```
+
+
+```{r}
+balance_df <- ecls_clean %>%
+  filter(if_all(c(s2yyfive, s2mmfive, s2ddfive), ~ . >= 0)) %>%
+  mutate(
+    entry_rule = as.Date(sprintf("%04d-%02d-%02d", s2yyfive, s2mmfive, s2ddfive)), 
+    dob = as.Date(sprintf("%04d-%02d-%02d", dobyy, dobmm, dobdd)), 
+    when_five = dob + years(5)
+  ) %>% 
+  group_by(entry_rule) %>%
+  mutate(
+    interval = case_when(
+      when_five <= entry_rule & abs(as.numeric(entry_rule - when_five)) <= 90 ~ "before", 
+      when_five > entry_rule - years(1) & abs(as.numeric(when_five - (entry_rule - years(1)))) <= 90 ~ "after", 
+      TRUE ~ "not_in"
+    ), 
+    interval = as.factor(interval)
+  )
+
+balance_df_all <- balance_df %>%
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  )) 
+
+balance_df_drop <- balance_df %>% 
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  )) %>%
+  filter(!is.na(c7r4mscl))
+```
 
 # Fade-out of Math Score Boost over Time 
+
+```{R}
+mod <- lm(c1r4mscl ~ p1hfamil + wkincome + p1numsib + p1firkdg + p1disabl, data = balance_df_all)
+summary(mod)
+```
+
+
 ```{r}
 ############################
 # Math Score Fade-Out
 ############################
 
-for (i in 1:7) { 
-  # run model
-  model_output <- run_iv(paste0("c", i, "r4mscl"), covar_list)
-  
-  assign(paste0("model_iv_", i), model_output[[1]])
-  assign(paste0("se_iv_", i), model_output[[2]])
-}
+covar_list <- "p1hfamil + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl"
 
-models <- list(model_iv_1, model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7)
-se_list <- list(se_iv_1, se_iv_2, se_iv_3, se_iv_4, se_iv_5, se_iv_6, se_iv_7)
-
-stargazer(
-  models,
-  #model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7, 
-  se = se_list,
-  type = "latex", 
-  title = "Fade-out of Entry Age Effect on Test Scores", 
-  out.header = FALSE, 
-  star.cutoffs = c(0.05), 
-  digits = 2, 
-  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant"), 
-  add.lines = list(
-            c("SES Control", rep("Yes", 7)), 
-            c("School Math Mean control", rep("Yes", 7)), 
-            c("\\hline", rep("", 7))
-          ), 
-  covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
-  column.labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring")
-)
-
-############################
-# Reading Score Fade-Out
-############################
-
-for (i in 1:7) { 
-  # run model
-  model_output <- run_iv(paste0("c", i, "r4rscl"), covar_list)
-  
-  assign(paste0("model_iv_", i), model_output[[1]])
-  assign(paste0("se_iv_", i), model_output[[2]])
-}
-
-models <- list(model_iv_1, model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7)
-se_list <- list(se_iv_1, se_iv_2, se_iv_3, se_iv_4, se_iv_5, se_iv_6, se_iv_7)
-
-stargazer(
-  models,
-  #model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7, 
-  se = se_list,
-  type = "latex", 
-  title = "Fade-out of Entry Age Effect on Test Scores", 
-  out.header = FALSE, 
-  star.cutoffs = c(0.05), 
-  digits = 2, 
-  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant"), 
-  add.lines = list(
-            c("SES Control", rep("Yes", 7)), 
-            c("School Math Mean control", rep("Yes", 7)), 
-            c("\\hline", rep("", 7))
-          ), 
-  covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
-  column.labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring")
-)
-
-############################
-# Graph Fade-out 
-############################
-coef_iv <- rep(0, 7)
-
-coef_df <- data.frame(
-  grade = (1:7), 
-  coef_iv = coef_iv   
-)
+covar_list <- "p1hfamil + wkincome + p1numsib + p1firkdg + p1disabl"
 
 for (i in 1:7) {
-  coef_df$coef_iv[i] <- coef(get(paste0("model_iv_", i)))[["p1ageent"]]
+  # run model
+  model_output <- run_iv(paste0("c", i, "r4mscl"), paste0(paste0("age_test_", i, "+"), covar_list), balance_df_all, paste0("s", i, "_id"))
+  
+  assign(paste0("model_iv_all_", i), model_output[[1]])
+  assign(paste0("se_iv_all_", i), model_output[[2]])
+  
+  #model_output <- run_iv(paste0("c", i, "r4mscl"), paste0(paste0("age_test_", i, "+"), covar_list), balance_df_drop, paste0("s", i, "_id"))
+  
+  #assign(paste0("model_iv_drop_", i), model_output[[1]])
+  #assign(paste0("se_iv_drop_", i), model_output[[2]])
 }
 
-coef_df$grade <- factor(coef_df$grade, 
-                        levels = 1:7, 
-                        labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring"))
+models_drop <- list(
+  model_iv_drop_1, 
+  model_iv_drop_2, 
+  model_iv_drop_3, 
+  model_iv_drop_4, 
+  model_iv_drop_5, 
+  model_iv_drop_6, 
+  model_iv_drop_7
+)
 
+se_list_drop <- list(
+  se_iv_drop_1, 
+  se_iv_drop_2, 
+  se_iv_drop_3, 
+  se_iv_drop_4, 
+  se_iv_drop_5, 
+  se_iv_drop_6, 
+  se_iv_drop_7
+)
 
-iv_plot <- ggplot(aes(x = grade, y = coef_iv), data = coef_df) + 
-  geom_point(color = "steelblue") + 
-  geom_line(color = "steelblue", aes(group = 1)) + 
-  theme_minimal() + 
-  labs(
-    title = "Effect of Earlier Entry on Math IRT Scores Across Grades", 
-    x = "Data Collection Round", 
-    y = "IV Coefficient" 
-  ) + 
-  theme(
-    axis.text.x = element_text(margin = margin(t = 10)), 
-    axis.title.x = element_text(margin = margin(t = 20))
-    )
+models_all <- list(
+  model_iv_all_1, 
+  model_iv_all_2, 
+  model_iv_all_3, 
+  model_iv_all_4, 
+  model_iv_all_5, 
+  model_iv_all_6, 
+  model_iv_all_7
+)
 
-ggsave(file.path(output_path, "iv_plot_math.png"), plot = iv_plot, width = 8, height = 5, dpi = 300, bg = "white")
+se_list_all <- list(
+  se_iv_all_1, 
+  se_iv_all_2, 
+  se_iv_all_3, 
+  se_iv_all_4, 
+  se_iv_all_5, 
+  se_iv_all_6, 
+  se_iv_all_7
+)
+
+stargazer(
+  models_all,
+  #model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7, 
+  se = se_list_all,
+  type = "latex",
+  title = "Fade-out of Entry Age Effect on Test Scores", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl",  "Constant"), 
+  add.lines = list(
+            c("SES Control", rep("Yes", 7)), 
+            c("School Math Mean control", rep("Yes", 7)), 
+            c("\\hline", rep("", 7))
+          ), 
+  covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
+  column.labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring")
+)
 ```
 
 
 ```{r}
-model_honors <- run_iv("p7sameag", covar_list)
-model <- model_honors[[1]]
-se <- model_honors[[2]]
+covar_list <- "p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1disabl + sch_rdg_mean_1 + p1firkdg"
 
+balance_df_all <- balance_df_all %>%
+  mutate(g7honors  = as.numeric(g7honors), 
+         n7honors = as.numeric(n7honors), 
+         m7honors = as.numeric(m7honors)) %>%
+  mutate(g7honors = -g7honors, 
+         n7honors = -n7honors, 
+         m7honors = -m7honors)
+
+balance_df_all <- balance_df_all %>%
+  mutate(if_else(g7honors == -3, NA_real_, g7honors), 
+         if_else(m7honors == -3, NA_real_, m7honors), 
+         if_else(n7honors == -3, NA_real_, n7honors))
+  
+
+covar_list <- "p1hfamil + wkincome + p1numsib + p1firkdg + p1disabl"
+
+model_honors_g <- run_iv("t2learn", paste0("age_test_7 +", covar_list), balance_df_all, "s7_id")
+model_g <- model_honors_g[[1]]
+se_g <- model_honors_g[[2]]
+
+model_honors_m <- run_iv("m7honors", paste0("age_test_7 +", covar_list), balance_df_all, "s7_id")
+model_m <- model_honors_m[[1]]
+se_m <- model_honors_m[[2]]
+
+model_honors_n <- run_iv("n7honors", paste0("age_test_7 +", covar_list), balance_df_all, "s7_id")
+model_n <- model_honors_n[[1]]
+se_n <- model_honors_n[[2]]
+
+model_output <- run_iv("", paste0("ageent +", covar_list), balance_df_all, "s2_id")
+model <- model_output[[1]] 
+se <- model_output[[2]]
 
 stargazer(
   model, 
@@ -738,9 +1104,603 @@ stargazer(
   out.header = FALSE, 
   star.cutoffs = c(0.05), 
   digits = 2, 
-  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant")
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "Constant")
 )
 ```
+
+```{r}
+balance_df_all %>%
+  dplyr::select(matches("hlphwk"))
+
+mod <- lm(p7good ~ sch_math_mean_7 + sch_math_mean_6 + delta_67 + c7r4mscl + p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1disabl, data = balance_df_all)
+summary(mod)
+
+j <- balance_df_all %>%
+  filter(!is.na(c7r4mscl))  %>%
+  group_by(interval) %>%
+  summarize(
+    n = n(),
+    not_na_english = sum(!is.na(g7honors)), 
+    not_na_science = sum(!is.na(n7honors)), 
+    not_na_math = sum(!is.na(m7honors)), 
+    count_english = sum(as.numeric(g7honors == 1), na.rm = T) ,
+    promoted_english = sum(as.numeric(g7honors == 1), na.rm = T) / not_na_english, 
+    promoted_science = sum(as.numeric(n7honors == 1), na.rm = T) / not_na_science, 
+    promoted_math = sum(as.numeric(m7honors == 1), na.rm = T) / not_na_math
+  )
+
+ggplot(data = j, aes(x = interval, y = not_na_english)) + 
+  geom_bar(stat = "identity") + 
+  geom_text(aes(label = paste0(not_na_english)))
+
+
+j <- balance_df_all %>%
+  filter(!is.na(c7r4mscl))  %>%
+  group_by(interval) %>%
+  summarize(
+    not_na = sum(!is.na(p7schgrd)), 
+    a = sum(p7schgrd == 1, na.rm = TRUE), 
+    b = sum(p7schgrd == 2, na.rm = TRUE), 
+    c = sum(p7schgrd == 3, na.rm = TRUE), 
+    d = sum(p7schgrd == 4, na.rm = TRUE), 
+    f = sum(p7schgrd == 5, na.rm = TRUE), 
+    other = sum(p7schgrd == 6 | is.na(p7schgrd))
+  ) %>%
+  pivot_longer(cols = a:other, names_to = "grade", values_to = "count")
+
+j <- j %>%
+  pivot_longer(cols = a:other, names_to = "grade", values_to = "count") %>%
+  mutate(proportion = count / not_na)
+
+ggplot(j, aes(x = interval, y = proportion, fill = grade)) +
+  geom_bar(stat = "identity", position = "fill") +
+  geom_text(aes(label = paste0(count, "\n", scales::percent(proportion, accuracy = 1))),
+            position = position_fill(vjust = 0.5), size = 3, color = "white") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(x = "Interval", y = "Proportion", fill = "Grade", 
+       title = "Proportion of grades") +
+  theme_minimal()
+
+j <- balance_df_all %>%
+  filter(!is.na(c7r4mscl))  %>%
+  group_by(interval) %>%
+  summarize(
+    not_na = sum(!is.na(c7sports)),
+    sports = sum(c7sports, na.rm = TRUE) / not_na
+  )
+
+```
+
+
+
+```{r}
+############################
+# Reading Score Fade-Out
+############################
+
+covar_list <- "p1hfamil + w1raceth + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl + sch_rdg_mean_1"
+
+covar_list <- "p1hfamil + wkincome + p1numsib + p1firkdg + p1disabl"
+
+for (i in 1:7) { 
+  # run model
+  model_output <- run_iv(paste0("c", i, "r4rscl"), paste0(paste0("age_test_", i, "+"), covar_list), balance_df_all, paste0("s", i, "_id"))
+  
+  assign(paste0("model_iv_all_", i), model_output[[1]])
+  assign(paste0("se_iv_all_", i), model_output[[2]])
+  
+  model_output <- run_iv(paste0("c", i, "r4rscl"), paste0(paste0("age_test_", i, "+"), covar_list), balance_df_drop, paste0("s", i, "_id"))
+  
+  assign(paste0("model_iv_drop_", i), model_output[[1]])
+  assign(paste0("se_iv_drop_", i), model_output[[2]])
+}
+
+models_drop <- list(
+  model_iv_drop_1, 
+  model_iv_drop_2, 
+  model_iv_drop_3, 
+  model_iv_drop_4, 
+  model_iv_drop_5, 
+  model_iv_drop_6, 
+  model_iv_drop_7
+)
+
+se_list_drop <- list(
+  se_iv_drop_1, 
+  se_iv_drop_2, 
+  se_iv_drop_3, 
+  se_iv_drop_4, 
+  se_iv_drop_5, 
+  se_iv_drop_6, 
+  se_iv_drop_7
+)
+
+models_all <- list(
+  model_iv_all_1, 
+  model_iv_all_2, 
+  model_iv_all_3, 
+  model_iv_all_4, 
+  model_iv_all_5, 
+  model_iv_all_6, 
+  model_iv_all_7
+)
+
+se_list_all <- list(
+  se_iv_all_1, 
+  se_iv_all_2, 
+  se_iv_all_3, 
+  se_iv_all_4, 
+  se_iv_all_5, 
+  se_iv_all_6, 
+  se_iv_all_7
+)
+
+
+stargazer(
+  models_all,
+  #model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7, 
+  se = se_list_all,
+  type = "latex", 
+  title = "Fade-out of Entry Age Effect on Test Scores", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant"), 
+  add.lines = list(
+            c("SES Control", rep("Yes", 7)), 
+            c("School Reading control", rep("Yes", 7)), 
+            c("\\hline", rep("", 7))
+          ), 
+  covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
+  column.labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring")
+)
+
+table <- data.frame(
+  k_fall = c(mean(balance_df_all$c1r4mscl, na.rm = TRUE), sd(balance_df_all$c1r4mscl, na.rm = TRUE)),
+  k_spr = c(mean(balance_df_all$c2r4mscl, na.rm = TRUE), sd(balance_df_all$c2r4mscl, na.rm = TRUE)),
+  first_fall = c(mean(balance_df_all$c3r4mscl, na.rm = TRUE), sd(balance_df_all$c3r4mscl, na.rm = TRUE)),
+  first_spr = c(mean(balance_df_all$c4r4mscl, na.rm = TRUE), sd(balance_df_all$c4r4mscl, na.rm = TRUE)), 
+  third_spr = c(mean(balance_df_all$c5r4mscl, na.rm = TRUE), sd(balance_df_all$c5r4mscl, na.rm = TRUE)),
+  fifth_spr = c(mean(balance_df_all$c6r4mscl, na.rm = TRUE), sd(balance_df_all$c6r4mscl, na.rm = TRUE)),
+  eigth_spr = c(mean(balance_df_all$c7r4mscl, na.rm = TRUE), sd(balance_df_all$c7r4mscl, na.rm = TRUE))
+)
+
+# Create reading summary table
+table <- data.frame(
+  k_fall = c(mean(balance_df_all$c1r4rscl, na.rm = TRUE), sd(balance_df_all$c1r4rscl, na.rm = TRUE)),
+  k_spr = c(mean(balance_df_all$c2r4rscl, na.rm = TRUE), sd(balance_df_all$c2r4rscl, na.rm = TRUE)),
+  first_fall = c(mean(balance_df_all$c3r4rscl, na.rm = TRUE), sd(balance_df_all$c3r4rscl, na.rm = TRUE)),
+  first_spr = c(mean(balance_df_all$c4r4rscl, na.rm = TRUE), sd(balance_df_all$c4r4rscl, na.rm = TRUE)), 
+  third_spr = c(mean(balance_df_all$c5r4rscl, na.rm = TRUE), sd(balance_df_all$c5r4rscl, na.rm = TRUE)),
+  fifth_spr = c(mean(balance_df_all$c6r4rscl, na.rm = TRUE), sd(balance_df_all$c6r4rscl, na.rm = TRUE)),
+  eigth_spr = c(mean(balance_df_all$c7r4rscl, na.rm = TRUE), sd(balance_df_all$c7r4rscl, na.rm = TRUE))
+)
+
+# Label rows
+rownames(table) <- c("mean", "standard deviation")
+
+# Round values
+table <- round(table, digits = 1)
+
+# Output LaTeX code
+latex_code <- kable(
+  table,
+  format = "latex",
+  booktabs = TRUE,
+  caption = "Means and Standard Deviations of Reading Scores by Grade"
+)
+
+cat(latex_code)
+```
+
+
+```{r}
+############################
+# Graph Fade-out 
+############################
+coef_iv <- rep(0, 7)
+
+coef_df_all <- data.frame(
+  grade = (1:7), 
+  coef = rep(0,7), 
+  se = rep(0,7)
+)
+
+coef_df_drop <- data.frame(
+  grade = (1:7), 
+  coef = rep(0,7), 
+  se = rep(0,7)
+)
+
+for (i in 1:7) {
+  coef_df_all$coef[i] <- coef(get(paste0("model_iv_all_", i)))[[paste0("age_test_", i)]]
+  coef_df_drop$coef[i] <- coef(get(paste0("model_iv_drop_", i)))[[paste0("age_test_", i)]]
+}
+
+coef_df_all$grade <- factor(coef_df_all$grade, 
+                        levels = 1:7, 
+                        labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring"))
+
+coef_df_all$se = c(sqrt(diag(vcov(model_iv_all_1)))["age_test_1"], sqrt(diag(vcov(model_iv_all_2)))["age_test_2"], 
+         sqrt(diag(vcov(model_iv_all_3)))["age_test_3"], sqrt(diag(vcov(model_iv_all_4)))["age_test_4"], 
+         sqrt(diag(vcov(model_iv_all_5)))["age_test_5"], sqrt(diag(vcov(model_iv_all_6)))["age_test_6"], 
+         sqrt(diag(vcov(model_iv_all_7)))["age_test_7"]
+  )
+
+coef_df_drop$grade <- factor(coef_df_drop$grade, 
+                        levels = 1:7, 
+                        labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring"))
+
+coef_df_drop$se <- c(sqrt(diag(vcov(model_iv_drop_1)))["age_test_1"], sqrt(diag(vcov(model_iv_drop_2)))["age_test_2"], 
+         sqrt(diag(vcov(model_iv_drop_3)))["age_test_3"], sqrt(diag(vcov(model_iv_drop_4)))["age_test_4"], 
+         sqrt(diag(vcov(model_iv_drop_5)))["age_test_5"], sqrt(diag(vcov(model_iv_drop_6)))["age_test_6"], 
+         sqrt(diag(vcov(model_iv_drop_7)))["age_test_7"]
+  )
+
+iv_plot <- ggplot() + 
+  # Points for both samples
+  geom_point(data = coef_df_all, aes(x = grade, y = coef, color = "Full Sample", group = 1)) + 
+  geom_line(data = coef_df_all, aes(x = grade, y = coef, color = "Full Sample", group = 1)) + 
+  geom_point(data = coef_df_drop, aes(x = grade, y = coef, color = "Restricted Sample"), group = 1) + 
+  geom_line(data = coef_df_drop, aes(x = grade, y = coef, color = "Restricted Sample"), group = 1) + 
+  # Ribbons for both samples
+  geom_ribbon(data = coef_df_all, 
+              aes(x = grade, ymin = coef - se, ymax = coef + se, fill = "Full Sample"), 
+              alpha = 0.1, group = 1) + 
+  geom_ribbon(data = coef_df_drop, 
+              aes(x = grade, ymin = coef - se, ymax = coef + se, fill = "Restricted Sample"), 
+              alpha = 0.1, group = 1) +
+  theme_minimal(base_size = 16) + 
+  labs(
+    title = "Effect of Earlier Entry on Math IRT Scores Across Grades", 
+    x = "Data Collection Round", 
+    y = "IV Coefficient", 
+    color = "Sample", 
+    fill = "Sample"
+  ) + 
+  theme(
+    text = element_text(family = "Times"),
+    axis.text.x = element_text(size = 15, margin = margin(t = 10)), 
+    axis.title.x = element_text(size = 16, margin = margin(t = 20)), 
+    axis.text.y = element_text(size = 15, margin = margin(t = 10)), 
+    axis.title.y = element_text(size = 16, margin = margin(t = 20))
+  ) + 
+  scale_color_manual(values = c("Full Sample" = "black", "Restricted Sample" = "steelblue")) + 
+  scale_fill_manual(values = c("Full Sample" = "black", "Restricted Sample" = "steelblue"))
+
+# rosybrown, steelblue, darkolivegreen, darkorange 
+print(iv_plot)
+
+ggsave(file.path(output_path, "iv_plot_math.png"), plot = iv_plot, width = 10, height = 5, dpi = 300, bg = "white")
+```
+
+
+```{r}
+############################
+# Parental Perception Fade-Out
+############################
+
+# covar_list <- "p1hfamil + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl"
+
+balance_df_all <- balance_df_all %>%
+  mutate(p7schgrd = as.numeric(p7schgrd)) %>%
+  mutate(p7schgrd = -p7schgrd) 
+
+covar_list <- "p1hfamil + wkincome + p1numsib + p1firkdg + p1disabl + sch_math_mean_1"
+  
+for (i in c(1,4,5,6,7)) {
+  # run model
+  model_output <- run_iv(paste0("par_", i), paste0(paste0("age_test_", i, "+"), covar_list), balance_df_all, paste0("s", i, "_id"))
+  # paste0("age_test_", i, "+")
+  
+  assign(paste0("model_iv_all_", i), model_output[[1]])
+  assign(paste0("se_iv_all_", i), model_output[[2]])
+  
+  #model_output <- run_iv(paste0("par_", i), paste0(paste0("age_test_", i, "+"), covar_list), balance_df_drop, paste0("s", i, "_id"))
+  # paste0("age_test_", i, "+")
+  
+  #assign(paste0("model_iv_drop_", i), model_output[[1]])
+  #assign(paste0("se_iv_drop_", i), model_output[[2]])
+}
+
+model_grade_output <- run_iv("p7schgrd", paste0("age_test_7 +", covar_list), balance_df_all, "s7_id")
+model_grade <- model_grade_output[[1]]
+se_grade <- model_grade_output[[2]]
+
+models_drop <- list(
+  model_iv_drop_2,
+  model_iv_drop_4, 
+  model_iv_drop_5, 
+  model_iv_drop_6, 
+  model_iv_drop_7
+)
+
+se_list_drop <- list(
+  se_iv_drop_2, 
+  se_iv_drop_4, 
+  se_iv_drop_5, 
+  se_iv_drop_6, 
+  se_iv_drop_7
+)
+
+models_all <- list(
+  model_iv_all_1, 
+  model_iv_all_4, 
+  model_iv_all_5, 
+  model_iv_all_6, 
+  model_iv_all_7, 
+  model_grade
+)
+
+se_list_all <- list(
+  se_iv_all_1, 
+  se_iv_all_4, 
+  se_iv_all_5, 
+  se_iv_all_6, 
+  se_iv_all_7, 
+  se_grade
+)
+
+stargazer(
+  models_all,
+  #model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7, 
+  se = se_list_all,
+  type = "latex", 
+  title = "Fade-out of Entry Age Effect on Test Scores", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant"), 
+  add.lines = list(
+            c("SES Control", rep("Yes", 7)), 
+            c("School Math Mean control", rep("Yes", 7)), 
+            c("\\hline", rep("", 7))
+          ), 
+  column.labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring")
+)
+```
+
+
+```{r}
+############################
+# Parental Perception Fade-Out
+############################
+
+# covar_list <- "p1hfamil + wkincome + p1hmemp + p1hdemp + p1numsib + w1momed + w1daded + w1dadscr + w1momscr + p1firkdg + p1disabl"
+
+balance_df_all <- balance_df_all %>%
+  mutate(p7schgrd = as.numeric(p7schgrd)) %>%
+  mutate(p7schgrd = -p7schgrd)
+
+balance_df_all <- balance_df %>%
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  )) %>%
+  mutate(
+    w1povrty = as.factor(w1povrty)
+  )
+
+covar_list <- "p1hfamil + wkincome + p1numsib + p1firkdg + p1disabl + w1dadscr + w1povrty"
+  
+for (i in c(1,4,5,6,7)) {
+  # run model
+  model_output <- run_iv(paste0("par_", i), paste0(paste0("age_test_", i, "+"), covar_list), balance_df_all, paste0("s", i, "_id"))
+  # paste0("age_test_", i, "+")
+  
+  assign(paste0("model_iv_all_", i), model_output[[1]])
+  assign(paste0("se_iv_all_", i), model_output[[2]])
+  
+  #model_output <- run_iv(paste0("par_", i), paste0(paste0("age_test_", i, "+"), covar_list), balance_df_drop, paste0("s", i, "_id"))
+  # paste0("age_test_", i, "+")
+  
+  #assign(paste0("model_iv_drop_", i), model_output[[1]])
+  #assign(paste0("se_iv_drop_", i), model_output[[2]])
+}
+
+models_drop <- list(
+  model_iv_drop_2,
+  model_iv_drop_4, 
+  model_iv_drop_5, 
+  model_iv_drop_6, 
+  model_iv_drop_7
+)
+
+se_list_drop <- list(
+  se_iv_drop_2, 
+  se_iv_drop_4, 
+  se_iv_drop_5, 
+  se_iv_drop_6, 
+  se_iv_drop_7
+)
+
+models_all <- list(
+  model_iv_all_1, 
+  model_iv_all_4, 
+  model_iv_all_5, 
+  model_iv_all_6, 
+  model_iv_all_7
+)
+
+se_list_all <- list(
+  se_iv_all_1, 
+  se_iv_all_4, 
+  se_iv_all_5, 
+  se_iv_all_6, 
+  se_iv_all_7
+)
+
+stargazer(
+  models_all,
+  #model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7, 
+  se = se_list_all,
+  type = "latex", 
+  title = "Fade-out of Entry Age Effect on Test Scores", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1disabl",  "Constant"), 
+  add.lines = list(
+            c("SES Control", rep("Yes", 7)), 
+            c("School Math Mean control", rep("Yes", 7)), 
+            c("\\hline", rep("", 7))
+          ), 
+  column.labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring")
+)
+```
+
+
+```{R}
+############################
+# Child's Self-Perception 
+############################
+
+covar_list <- "p1hfamil + wkincome + p1numsib + p1firkdg + p1disabl"
+
+balance_df <- ecls_clean %>%
+  filter(if_all(c(s2yyfive, s2mmfive, s2ddfive), ~ . >= 0)) %>%
+  mutate(
+    entry_rule = as.Date(sprintf("%04d-%02d-%02d", s2yyfive, s2mmfive, s2ddfive)), 
+    dob = as.Date(sprintf("%04d-%02d-%02d", dobyy, dobmm, dobdd)), 
+    when_five = dob + years(5)
+  ) %>% 
+  group_by(entry_rule) %>%
+  mutate(
+    interval = case_when(
+      when_five <= entry_rule & abs(as.numeric(entry_rule - when_five)) <= 30 ~ "before", 
+      when_five > entry_rule - years(1) & abs(as.numeric(when_five - (entry_rule - years(1)))) <= 30 ~ "after", 
+      TRUE ~ "not_in"
+    ), 
+    interval = as.factor(interval)
+  )
+
+balance_df_drop <- balance_df %>% 
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  )) %>%
+  filter(!is.na(c7r4mscl)) %>%
+  mutate(
+    p4hlphwk = as.numeric(p4hlphwk),
+    p7hlpsci = as.numeric(p7hlpsci),
+    p4hlphwk = -p4hlphwk, 
+    p7ofttlk = -p7ofttlk, 
+    p7ofhlpr = -p7ofhlpr, 
+    captain = as.numeric(c7sports == 3), 
+    participate = as.numeric(c7sports == 2)
+  )
+
+model_output <- run_iv("c7sports", paste0("age_test_7 +", covar_list), balance_df_drop, "s7_id")
+model_1 <- model_output[[1]] 
+se_1 <- model_output[[2]]
+
+model_output <- run_iv("c7clslik", paste0("age_test_7 +", covar_list), balance_df_drop, "s7_id")
+model_2 <- model_output[[1]] 
+se_2 <- model_output[[2]]
+
+model_output <- run_iv("c7clsoth", paste0("age_test_7 +", covar_list), balance_df_drop, "s7_id")
+model_3 <- model_output[[1]] 
+se_3 <- model_output[[2]]
+
+model_output <- run_iv("c7frout", paste0("age_test_7 +", covar_list), balance_df_drop, "s7_id")
+model_4 <- model_output[[1]] 
+se_4 <- model_output[[2]]
+
+model_output <- run_iv("c7mthgd", paste0("age_test_7 +", covar_list), balance_df_drop, "s7_id")
+model_5 <- model_output[[1]] 
+se_5 <- model_output[[2]]
+
+model <- list(
+  model_1, 
+  model_2, 
+  model_3, 
+  model_4, 
+  model_5
+)
+
+se <- list(
+  se_1, 
+  se_2, 
+  se_3, 
+  se_4, 
+  se_5
+)
+
+stargazer(
+  model, 
+  se = se,
+  type = "latex", 
+  title = "Fade-out of Entry Age Effect on Test Scores", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "Constant")
+)
+
+model_output <- run_iv("c7lonly", paste0("age_test_7 +", covar_list), balance_df_drop, "s7_id")
+model <- model_output[[1]] 
+se <- model_output[[2]]
+
+summary(model)
+```
+
+
+# Similar peer age 
+
+```{R}
+ggplot(ecls_new_clean_exp) + 
+  geom_histogram(aes(x = x1ageent), bins = 50)
+
+
+bala
+ggplot(data = balance_df_interval %>%
+         group_by(interval) %>%
+         summarize(
+           hs = mean(as.numeric(c7howfar == 2), na.rm = TRUE), 
+           cc = mean(as.numeric(c7howfar == 3), na.rm = TRUE), 
+           college = mean(as.numeric(c7howfar == 5), na.rm = TRUE), 
+           masters = mean(as.numeric(c7howfar == 6), na.rm = TRUE), 
+           phd = mean(as.numeric(c7howfar == 7), na.rm = TRUE)
+         )) + 
+  geom_line(aes(x = interval, y = hs , color = "hs")) + 
+  geom_line(aes(x = interval, y = cc, color = "cc")) + 
+  geom_line(aes(x = interval, y = college, color = "college")) + 
+  geom_line(aes(x = interval, y = masters, color = "masters")) + 
+  geom_line(aes(x = interval, y = phd, color = "phd")) + 
+  theme_minimal()
+
+ggplot(data = balance_df_interval %>%
+         group_by(interval) %>%
+         summarize(
+           math = mean(as.numeric(c7sports), na.rm = TRUE)
+         )) + 
+  geom_line(aes(x = interval, y = math , color = "hs")) +
+  theme_minimal()
+
+```
+
+```{r}
+run_ols <- function(outcome_var, covar_list) {
+  formula_str <- paste0(
+    outcome_var, "~", 
+    covar_list
+  )
+  
+  model_ols <- lm(as.formula(formula_str), data = balance_df_interval)
+  
+  se_ols <- sqrt(diag(vcovCL(model_ols, cluster = ~ s1_id)))
+  
+  return(list(model_ols, se_ols))
+}
+
+ma <- run_ols("par_hw", paste0("age_test_7+", covar_list))[[1]]
+summary(ma)
+
+# 0.17
+```
+
 
 ```{r}
 # Huge effect on p4learn and t4interp, learn, extern, 
@@ -748,43 +1708,86 @@ stargazer(
 # As well as M6RTMTH 
 
 
-model <- lm(p4learn ~ p1hfamil + w1raceth + w1momed + w1daded + s2mmfive * after_7 + p1firkdg + sch_math_mean_1, data = jk)
-summary(model)
+model_learn <- run_iv("t4learn", covar_list)
+model_1 <- model_learn[[1]]
+se_1 <- model_learn[[2]]
 
-summary(ecls_clean$c6r4mscl)
+model_interp <- run_iv("t4interp", covar_list)
+model_2 <- model_interp[[1]]
+se_2 <- model_interp[[2]]
 
-jk %>%
-  select(matches("firk"))
+model_extern <- run_iv("t4extern", covar_list)
+model_3 <- model_extern[[1]]
+se_3 <- model_extern[[2]]
+
+model_math <- run_iv("m6rtmth", covar_list)
+model_4 <- model_math[[1]]
+se_4 <- model_math[[2]]
+
+ 
+stargazer(
+  model_1, model_2, model_3, model_4, 
+  se = list(se_1, se_2, se_3, se_4),
+  type = "latex", 
+  title = "Effect of Entry Age on Teacher Ratings", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl", "sch_math_mean", "Constant"), 
+  column.labels = c("Learning Rating (2nd Gr)", "Social Rating (2nd Gr)", "Extern Rating (2nd Gr)", "Math Rating (5th Gr)")
+)
 
 ecls_clean %>%
-  group_by(s2mmfive, s2yyfive) %>%
-  filter(s2yyfive >= 1997) %>%
-  summarize(
-    mean = mean(p1ageent, na.rm = T), 
-    n = n()
-  )
+  select(t4interp)
 
-
-ecls_clean %>%
-  group_by(s2mmfive, s2yyfive) %>%
-  filter(s2yyfive >= 1997) %>%
-  summarize(
-    mean = mean(p1ageent, na.rm = T), 
-    n = n()
-  )
-
-table(ecls_clean$s2mmfive)
-
-table(ecls_clean$u4schbmm)
-
-ecls_clean %>%
-  group_by(s1_id) %>%
-  summarize(
-    n = n_distinct(childid)
-  )
-
-head(ecls_clean)
 ```
+
+```{r}
+########################## 
+# 2. Item Level Measures 
+########################## 
+
+item_table <- ecls_clean %>%
+  select(matches("r4mpb")) %>%
+  mutate(id = row_number()) %>%
+  mutate(across(
+    .cols = -id,                # apply to all columns except 'id'
+    .fns = ~ ifelse(. < 0, NA, .)
+  )) %>%
+  pivot_longer(
+    cols = starts_with("c"),
+    names_to = c("grade", "math_skill"), 
+    names_pattern = "c(\\d+)r4mpb(\\d+)",
+    values_to = "score"
+  ) %>%
+  mutate(
+    score = as.numeric(score), 
+    math_skill = as.numeric(math_skill)
+  ) %>%
+  group_by(grade, math_skill) %>%
+  summarize(
+    mean_score = mean(score, na.rm = T)
+  ) %>%
+  pivot_wider(
+    names_from = grade,
+    values_from = mean_score,
+    names_prefix = "grade_"
+  ) %>%
+  mutate(across(
+    .cols = everything(), 
+    .fns = ~ round(.,2)
+  )
+  )
+
+item_table
+latex_table <- xtable(item_table)
+
+# Export the LaTeX table to a .tex file
+capture.output(print(latex_table), file = "item_table.tex")
+
+```
+
+
 
 ```{r}
 ########################## 
@@ -818,8 +1821,6 @@ child_vars <- c("p1ageent", "p1agefrs", "w1raceth", "p1firkdg", "p1center")
 
 tch_vars <- c("b1behvr", "b1yrskin", "b1yrsch", "b1notcap", "race_match_k")
 ```
-
-
 
 
 

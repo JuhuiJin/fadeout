@@ -1,0 +1,671 @@
+---
+title: "ecls_surrogacy"
+output: html_document
+date: "2025-03-10"
+---
+
+# ECLS-K 
+
+```{r} 
+source("../../setup/external.R")
+output_path <- "../output/"
+
+##########################
+# Set up
+##########################
+
+# Original K-8 Sample 
+ecls <- read_dta(file.path(external_path, "ecls/ECLSK_Kto8_child_STATA.dta"))
+save(ecls, file = file.path(external_path, "ecls/raw_ecls.RData"))
+load(file.path(external_path, "ecls/raw_ecls.RData"))
+
+# Corrected ECLS (Fix incorrect thetas)
+corrected_ecls <- read_dta(file.path(external_path, "ecls/eclsk_theta_errata.dta"))
+colnames <- sub("_r$", "", colnames(corrected_ecls))
+
+# Factorize Demographic Variables 
+ecls_clean <- ecls %>%
+  clean_names() %>%
+  left_join(corrected_ecls, by = "childid") %>%
+  dplyr::select(-all_of(setdiff(colnames, "childid")))  %>% # Get rid of incorrect thetas
+  dplyr::select(where(~ !all(is.na(.) | . == -2 | . == -9))) %>% # Omit Suppressed Columns
+  mutate( 
+    # Factorize and NA Demographic Variables 
+    p1ageent = if_else(p1ageent <= 0, NA, p1ageent), 
+    across(c(p1hfamil, p2hfamil, p4hfamil, p5hfamil, p6hfamil, p7hfamil), as.factor), 
+    across(
+      c(p1hmemp, p4hmemp, p5hmemp, p6hmemp, p7hmemp, # Mom Emp
+        p1hdemp, p4hdemp, p5hdemp, p6hdemp, p7hdemp, # Dad Emp
+        wkdaded, w1daded, w3daded, w5daded, w8daded, 
+        wkmomed, w1momed, w3momed, w5momed, w8momed,
+        wkraceth, w1raceth), 
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ), 
+    across(c(wkraceth, w1raceth, w1povrty, w3povrty, w5povrty, w8povrty, wkdaded, w1daded, w3daded, w5daded, w8daded,wkmomed, w1momed, w3momed, w5momed, w8momed), as.factor)
+  ) 
+
+# Unlabel some Variables
+ecls_clean <- ecls_clean %>%
+  mutate(
+    s1_id = as.factor(s1_id),
+    w1dadscr = as.numeric(w1dadscr), 
+    w1momscr = as.numeric(w1momscr), 
+    across(matches("learn|extern|intern|contro|interp|angry|lonly|stops|noplan|clslik|closcl|clostc|enjoy|grdyou|mthgd|engbst|likmth|grdeng|enjrd|enjmth|clsoth|clscar|frover|gofrnd|frout|talk|helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci|frqtlk|ofttlk|tlkfrd|tlkgrd|tlkfut|fitin|wkdone"), 
+           ~as.numeric(.)), 
+    across(matches("[cgmnt][1-7]r4mscl|honors"), ~as.numeric(.))
+  )
+
+# Fix Negatives to NA's 
+ecls_clean <- ecls_clean %>%
+  mutate(
+    # Fix negatives or zero for t* and p* variables
+    across(
+      matches("^t[1-7](learn|extern|intern|contro|interp)|^p[1-7](sameag|atteni|solve|pronou)$"),
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ),
+    
+    # Fix negatives or zero for grade 7 behavioral/cognitive variables
+    across(
+      matches("^[gntm]7(behind|tlkout|passiv|relwel|disrup|absent|tardy|honors|organz|grammar|gather|wrtvar|style|analyo|creato|attent|orgdat|write|problm|presen|designn|scconc|scprob|talkab|proofs|apply|repres|effo|imprv|clasp|behav|cmphw)"),
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ),
+
+    # Fix negatives or zero for grade 6 academic/cognitive variables
+    across(
+      matches("^[gntm]6(alg|rtmth|abil|divide|strat|plcvl|shape|rtlang|promot|speak|raloud|info|rdfln|expost|mltstr|reflwr|rtskil|expln|clssfy|comsc|sciprd|princp)"),
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ), 
+    
+    across(
+      matches("c7(home|angry|likrd|lonly|flgood|worth|able|stops|noplan|closcl|clostc|enjoy|howfar|clslik|grdyou|grdpar|mthgd|likmth|grdeng|enjrd|enjmth|clsoth|clscar|frover|gofrnd|frout|talk|sports|club|arts|music|clslik|clostc|mthgd|likmth|grdeng|enjrd|enjmth|frover|grdyou|grdpar|talk)"), 
+      ~ if_else(.x <= 0, NA_real_, .x)
+    ), 
+    
+    across(
+      matches("p[1-7](hlphwk|librar|music|museum|attenp|spank|schlpa|helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci|frqtlk|tlkfrd|tlkgrd|tlkfut)"), 
+      ~ if_else(.x <= 0, NA_real_, .x)
+    )
+  )
+
+# Base Year School 
+school <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_School_STATA.dta")) %>%
+  clean_names() %>%
+  select(where(~ !all(is.na(.) | . == -2 | . == -9)))
+
+teacher <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_Teacher_STATA.dta")) %>%
+  clean_names()
+```
+
+# Further Data Cleaning 
+
+```{r}
+##########################
+# Define Age at Exam Date
+##########################
+ecls_clean <- ecls_clean %>%
+  mutate(
+    dob = make_date(year = dobyy, month = dobmm, day = dobdd), 
+    test_date_1 = make_date(year = c1asmtyy, month = c1asmtmm, day = c1asmtdd), 
+    test_date_2 = make_date(year = c2asmtyy, month = c2asmtmm, day = c2asmtdd),
+    test_date_3 = make_date(year = c3asmtyy, month = c3asmtmm, day = c3asmtdd),
+    test_date_4 = make_date(year = c4asmtyy, month = c4asmtmm, day = c4asmtdd),
+    test_date_5 = make_date(year = c5asmtyy, month = c5asmtmm, day = c5asmtdd),
+    test_date_6 = make_date(year = c6asmtyy, month = c6asmtmm, day = c6asmtdd), 
+    test_date_7 = make_date(year = c7asmtyy, month = c7asmtmm, day = c7asmtdd),
+    age_test_1 = as.numeric(difftime(test_date_1, dob, units = "days")) / 365.25, 
+    age_test_2 = as.numeric(difftime(test_date_2, dob, units = "days")) / 365.25, 
+    age_test_3 = as.numeric(difftime(test_date_3, dob, units = "days")) / 365.25, 
+    age_test_4 = as.numeric(difftime(test_date_4, dob, units = "days")) / 365.25, 
+    age_test_5 = as.numeric(difftime(test_date_5, dob, units = "days")) / 365.25, 
+    age_test_6 = as.numeric(difftime(test_date_6, dob, units = "days")) / 365.25, 
+    age_test_7 = as.numeric(difftime(test_date_7, dob, units = "days")) / 365.25
+  )
+
+##########################
+# 8th grade teacher eval
+##########################
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    # Compute z-scores across all 7th grade teacher vars 
+    across(
+      matches("^[gnt]7(behind|tlkout|passiv|relwel|disrup|absent|tardy|honors|organz|grammar|gather|wrtvar|style|analyo|creato|attent|orgdat|write|problm|presen|design|scconc|scprob|talkab|proofs|apply|repres|wkdone)"), 
+      ~ (mean(., na.rm = TRUE) - .) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    )
+  ) %>%
+  # Flip negative traits 
+  mutate(
+    across(
+      matches("^[gnt]7(passiv|attent|behind|disrup)_z"), 
+      ~ -.
+    )
+  ) 
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    tch_noncog_7 = rowMeans(pick(matches("^[gnm]7(tlkout|relwel|disrup|passiv|wrkhrd|attent|wkdone)_z")), na.rm = TRUE),
+    tch_cog_7 = rowMeans(pick(matches("^[gnm]7(behind|organz|grammar|gather|wrtvar|style|analyo|creato|orgdat|presen$|design$|scconc|scprob|talkab|proofs|apply|repres)_z")), na.rm = TRUE), 
+    #tch_eng_nongcog_7 = rowMeans(pick(matches("g7(tlkout|relwel|disrup|passiv|wrkhrd|attent|wkdone)_z")), na.rm = TRUE), 
+    #tch_mth_noncog_7 = rowMeans(pick(matches("m7(tlkout|relwel|disrup|passiv|wrkhrd|attent|wkdone)_z")), na.rm = TRUE), 
+    #tch_sci_noncog_7 = rowMeans(pick(matches("n7(tlkout|relwel|disrup|passiv|wrkhrd|attent|wkdone)_z")), na.rm  = TRUE), 
+    #tch_eng_cog_7 = rowMeans(pick(matches("g7(organz|grammar|gather|wrtvar|style|analyo|creato)_z")), na.rm = TRUE), 
+    #tch_sci_cog_7 = rowMeans(pick(matches("n7(orgdat|presen$|design$|scconc|scprob)_z")), na.rm = TRUE), 
+    #tch_mth_cog_7 = rowMeans(pick(matches("m7(talkab|proofs|apply|repres)_z")), na.rm = TRUE)
+    #tch_cog_7 = rowMeans(pick(matches("^[gnm]7(grammar|wrtvar|style|analyo|creato)_z")), na.rm = TRUE)
+  )
+
+# Save attendence measures for now 
+# absent|tardy|
+
+##########################
+# 5th grade teacher eval 
+##########################
+
+ecls_clean <- ecls_clean  %>%
+  mutate(
+    across(
+      matches("^[gntm]6(learn|extern|intern|contro$|interp$|alg|rtmth|divide|strat|plcvl|shape|rtlang|speak$|raloud|info$|rdfln|expost|mltstr|reflwr|rtskil|expln|clssfy|comsc|sciprd|princp)"), 
+      ~(. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ),
+    across(
+      matches("t6extern_z|t6intern_z"), 
+      ~ -.
+    )
+  )
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    tch_noncog_6 = rowMeans(pick(matches("^[t]6(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_cog_6 = rowMeans(pick(matches("^[gnm]6(rtlang|rtmth|rtskil)_z")), na.rm = TRUE)
+  )
+```
+
+
+```{r}
+##########################
+# Other grade teacher eval
+##########################
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("^t[1-5](learn|extern|intern|contro|interp|rtmth|rtlang)"), 
+      ~(. -mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+      ),
+    across(
+      matches("t[1-7](extern|intern)_z"), 
+      ~ -.
+    ), 
+    # Non-Cognitive Measures 
+    tch_noncog_1 = rowMeans(pick(matches("t1(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_noncog_2 = rowMeans(pick(matches("t2(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_noncog_4 = rowMeans(pick(matches("t4(learn|extern|intern|contro|interp)_z")), na.rm = TRUE),
+    tch_noncog_5 = rowMeans(pick(matches("t5(learn|extern|intern|contro|interp)_z")), na.rm = TRUE), 
+    # (Purely) Cognitive Measures 
+    tch_cog_2 = rowMeans(pick(matches("t2(rtlang|rtmth)_z")), na.rm = TRUE), 
+    tch_cog_4 = rowMeans(pick(matches("t4(rtlang|rtmth)_z")), na.rm = TRUE),
+    tch_cog_5 = rowMeans(pick(matches("t5(rtlang|rtmth)_z")), na.rm = TRUE)
+  )
+```
+
+# Parental Perception 
+
+```{R}
+##########################
+# Parental Perception
+##########################
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("p[1-7](sameag|atteni|solve|pronou|hlpful|offers)"), 
+      ~ - (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ),
+    par_1 = rowMeans(pick(matches("p1(sameag|atteni|solve|pronou)_z")), na.rm = TRUE),
+    par_4 = rowMeans(pick(matches("p4(sameag|atteni|solve|pronou)_z")), na.rm = TRUE),
+    par_5 = rowMeans(pick(matches("p5(sameag|atteni|solve|pronou)_z")), na.rm = TRUE),
+    par_6 = rowMeans(pick(matches("p6(sameag|atteni|solve|pronou)_z")), na.rm = TRUE),
+    par_7 = rowMeans(pick(matches("p7(sameag|atteni|solve|pronou|offers|hlpful)_z")), na.rm = TRUE)
+  )
+
+##########################
+# Parental Investment
+##########################
+
+# Divide these by type of investment: 
+# 1. Homework Help investment 
+# 2. Emotional Investment
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("p[1-7](helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci|frqtlk|ofttlk|tlkfrd|tlkgrd|tlkfut)"), 
+      ~ - (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ), 
+    across(
+      matches("p7(helpr|helpm|hlpsci)"),
+      ~ -. 
+    ),
+    par_hw = rowMeans(pick(matches("p7(helpr|ofhlpr|helpm|ofhlpm|hlpsci|oftsci)_z")), na.rm = TRUE), 
+    par_emot = rowMeans(pick(matches("p7(frqtlk|ofttlk|tlkfrd|tlkgrd|tlkfut)_z")), na.rm = TRUE)
+  )
+```
+
+# Child Self-Perception 
+
+```{r}
+ecls_clean <- ecls_clean %>% 
+  mutate(
+    across(
+      matches("c7(angry|lonly|flgood|worth|able|stops|noplan|useles|satisf|noprd|wryhng|nocntr)"), 
+      ~ (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ), 
+    across(
+      matches("c7(lonly|angry|stops|noplan|useles|noprd|wryhng|nocntr)_z"), 
+      ~ -. 
+    ), 
+    child_emot_7 = rowMeans(pick(matches("c7(angry|lonly|flgood|worth|able|useles|stops|noplan|useles|satisf|wryhng|nocntr)_z")), na.rm = TRUE)
+  )
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("c7(grdyou|c7mthgd|likmth|grdeng|enjrd|enjmth)"),       
+      ~ (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ), 
+    child_acad_7 = rowMeans(pick(matches("c7(grdyou|engbst|likmth|grdeng|enjrd|enjmth)_z")), na.rm = TRUE)
+  )
+
+ecls_clean <- ecls_clean %>%
+  mutate(
+    across(
+      matches("c7(closcl|clostc|enjoy|clslik|clsoth|clscar|frover|gofrnd|frout|talk)"),
+      ~ (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    ), 
+    child_social_7 = rowMeans(pick(matches("c7(fitin|closcl|clostc|enjoy|clslik|clsoth|clscar|frover|gofrnd|frout|talk)_z")), na.rm = T)
+  )
+```
+
+# Define Control Variables for Regressions at each Grade Level 
+
+
+```{r}
+balance_df <- ecls_clean %>%
+  filter(if_all(c(s2yyfive, s2mmfive, s2ddfive), ~ . >= 0)) %>%
+  mutate(
+    entry_rule = as.Date(sprintf("%04d-%02d-%02d", s2yyfive, s2mmfive, s2ddfive)), 
+    dob = as.Date(sprintf("%04d-%02d-%02d", dobyy, dobmm, dobdd)), 
+    when_five = dob + years(5)
+  ) %>% 
+  group_by(entry_rule) %>%
+  mutate(
+    interval = case_when(
+      when_five <= entry_rule & abs(as.numeric(entry_rule - when_five)) <= 90 ~ "before", 
+      when_five > entry_rule - years(1) & abs(as.numeric(when_five - (entry_rule - years(1)))) <= 90 ~ "after", 
+      TRUE ~ "not_in"
+    ), 
+    interval = as.factor(interval)
+  )
+
+balance_df_all <- balance_df %>%
+  zap_labels() %>%
+  filter(interval != "not_in") %>%
+  mutate(interval = case_when(
+    interval == "before" ~ 0, 
+    interval == "after" ~ 1
+  )) %>%
+  mutate(across(where(is.labelled), as.numeric))
+```
+
+# Automate Regress
+
+```{r}
+#####################
+# IV / TSLS Regression
+#####################
+
+run_iv <- function(outcome_var, covar_list, df) {
+  formula_str <- paste0(
+    outcome_var, 
+    "~", covar_list, "| interval +" , covar_list
+  )
+  
+  #cluster <- reformulate(cluster_str)
+  
+  model_iv <- ivreg(as.formula(formula_str), data = df)
+  
+  se_iv <- sqrt(diag(vcovCL(model_iv, cluster = ~ s1_id)))
+  
+  return(list(model_iv, se_iv))
+}
+
+#####################
+# OLS Regression
+#####################
+
+run_ols <- function(outcome_var, covar_list, df) {
+  formula_str <- paste0(
+    outcome_var, "~", 
+    covar_list
+  )
+  
+  model_ols <- lm(as.formula(formula_str), data = df)
+  
+  se_ols <- sqrt(diag(vcovCL(model_ols, cluster = ~ s1_id)))
+  
+  return(list(model_ols, se_ols))
+}
+```
+
+
+```{r} 
+run_iv <- function(outcome_var, covar_list, df) {
+  formula_str <- paste0(
+    outcome_var, 
+    "~", covar_list, "| interval +" , covar_list
+  )
+  
+  #cluster <- reformulate(cluster_str)
+  
+  model_iv <- ivreg(as.formula(formula_str), data = df)
+  
+  se_iv <- sqrt(diag(vcovCL(model_iv)))
+  
+  return(list(model_iv, se_iv))
+}
+
+run_ols <- function(outcome_var, covar_list, df) {
+  formula_str <- paste0(
+    outcome_var, "~", 
+    covar_list
+  )
+  
+  model_ols <- lm(as.formula(formula_str), data = df)
+  
+  se_ols <- sqrt(diag(vcovCL(model_ols)))
+  
+  return(list(model_ols, se_ols))
+}
+
+###################
+# Surrogate Index
+###################
+
+selected_covars <- c(
+  "p1ageent", "wkincome", "p1numsib", "p1firkdg", "p1disabl",
+  "c7r4mscl", "c6r4mscl", "c5r4mscl", "c4r4mscl", "c3r4mscl",
+  "par_4", "par_5", "par_6",
+  "tch_cog_6", "tch_cog_7", "tch_noncog_7",
+  "tch_cog_5", "tch_cog_4", "tch_noncog_4", "tch_noncog_5", "tch_noncog_6",
+  "g7honors", "interval", "age_test_1", "p7schgrd"
+)
+
+filter_covars <- c(
+  "p1ageent", "wkincome", "p1numsib", "p1firkdg", "p1disabl",
+  "c7r4mscl", "c6r4mscl", "c5r4mscl", 
+  "par_5", "par_6", 
+  "tch_cog_6", "tch_noncog_6", "tch_cog_7", "tch_noncog_7",
+  "g7honors", "interval", "age_test_1", "p7schgrd"
+)
+
+df <- balance_df_all %>%
+  filter(!is.na(c7r4mscl)) %>%
+  ungroup() %>%
+  dplyr::select(all_of(selected_covars)) %>%
+  filter(if_all(all_of(filter_covars), ~!is.na(.)))
+
+df <- df %>%
+  mutate(
+    # Compute z-scores across all 7th grade teacher vars 
+    across(
+      matches("^c[1-7]r4mscl"), 
+      ~ (. - mean(., na.rm = TRUE)) / sd(., na.rm = TRUE), 
+      .names = "{.col}_z"
+    )
+  )
+
+# Include just test score surrogates 
+covar_list <- "c6r4mscl_z + c5r4mscl_z + wkincome + p1numsib + p1firkdg + p1disabl"
+
+model_test <- run_ols("c7r4mscl_z", covar_list, df)
+
+beta_test <- as.matrix(model_test[[1]]$coefficients)
+
+X <- model.matrix(
+  ~ c6r4mscl_z + c5r4mscl_z + wkincome + p1numsib + p1firkdg + p1disabl,
+  data = df
+)
+
+df$y_hat_test <- as.vector(X %*% beta_test)
+
+covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
+
+model <- run_iv("y_hat_test", covar_list, df)
+
+summary(model[[1]])
+```
+
+
+
+```{r}
+df <- df %>%
+  filter(if_all(c(tch_cog_6, par_6), ~!is.na(.)))
+
+# Include non-cognitive surrogates
+covar_list <- "c6r4mscl_z + c5r4mscl_z + tch_cog_6 + par_6 + wkincome + p1numsib + p1firkdg + p1disabl"
+
+model_cog <- run_ols("c7r4mscl_z", covar_list, df)
+
+beta_cog <- as.matrix(model_cog[[1]]$coefficients)
+
+X <- model.matrix(
+  ~ c6r4mscl_z + c5r4mscl_z + tch_cog_6 + par_6 + wkincome + p1numsib + p1firkdg + p1disabl,
+  data = df
+)
+
+df$y_hat_test <- as.vector(X %*% beta_cog)
+
+covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
+
+model <- run_iv("y_hat_test", covar_list, df)
+
+summary(model[[1]])
+nrow(df)
+```
+
+```{r}
+##################
+# just cog 
+#################
+
+covar_list <- "wkincome + p1numsib + p1firkdg + p1disabl"
+
+run_comp <- function(outcome, test_control, cog_control, noncog_control) {
+all_covars <- c(covar_list, test_control)
+# Include just test score surrogates 
+formula_str <- paste(all_covars, collapse = " + ")
+formula <- as.formula(formula_str)
+
+model_test <- run_ols(outcome, formula, df)
+
+beta_test <- as.matrix(model_test[[1]]$coefficients)
+
+X <- model.matrix(
+  ~ formula,
+  data = df
+)
+
+df$y_hat_test <- as.vector(X %*% beta_test)
+
+covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
+
+model_test <- run_iv("y_hat_test", covar_list, df)
+
+summary(model_test[[1]])
+
+coef_test <- model_test[[1]]$coefficients[["age_test_1"]]
+
+##################
+# with cog
+##################
+
+all_covars <- c(covar_list, cog_control)
+# Include just test score surrogates 
+formula_str <- paste(all_covars, collapse = " + ")
+formula <- as.formula(formula_str)
+
+# Include non-cognitive surrogates
+#covar_list <- "c6r4mscl + c5r4mscl + tch_cog_6 + par_6 + wkincome + p1numsib + p1firkdg + p1disabl"
+
+model_cog <- run_ols(outcome, formula, df)
+
+beta_cog <- as.matrix(model_cog[[1]]$coefficients)
+
+X <- model.matrix(
+  ~ formula,
+  data = df
+)
+
+df$y_hat_test <- as.vector(X %*% beta_cog)
+
+covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
+
+model_cog <- run_iv("y_hat_test", covar_list, df)
+
+summary(model_cog[[1]])
+
+coef_cog <- model_cog[[1]]$coefficients[["age_test_1"]]
+
+##################
+# with non-cog
+##################
+
+# Include non-cognitive surrogates
+all_covars <- c(covar_list, noncog_control)
+formula_str <- paste(all_covars, collapse = " + ")
+formula <- as.formula(formula_str)
+
+model_noncog <- run_ols(outcome, formula, df)
+
+beta_noncog <- as.matrix(model_noncog[[1]]$coefficients)
+
+X <- model.matrix(
+  ~ formula,
+  data = df
+)
+
+df$y_hat_test <- as.vector(X %*% beta_noncog)
+
+covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
+
+model_noncog <- run_iv("y_hat_test", covar_list, df)
+
+summary(model_noncog[[1]])
+
+coef_noncog <- model_noncog[[1]]$coefficients[["age_test_1"]]
+
+##################
+# test iv
+##################
+
+covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
+model <- run_iv(outcome, covar_list, df)
+summary(model[[1]])
+
+coef_iv <- model[[1]]$coefficients[["age_test_1"]]
+
+return(c(coef_iv, coef_test, coef_cog, coef_noncog))
+}
+
+nrow(df)
+```
+
+
+```{r}
+coef_7 <- run_comp("g7honors", c("c6r4mscl", "c5r4mscl"), c("tch_cog_6", "par_6"))
+coef_6 <- run_comp("p7schgrd")
+
+df_plot <- data.frame(
+  grade = c(5,8),
+  iv = c(coef_6[1], coef_7[1]), 
+  test_only = c(coef_6[2], coef_7[2]), 
+  test_cog = c(coef_6[3], coef_7[3]), 
+  test_noncog = c(coef_6[4], coef_7[4])
+)
+
+df_plot 
+
+##################
+# plots
+##################
+
+ggplot() + 
+  geom_point(aes(x = grade, y = iv, color = "IV"), data = df_plot) + 
+  geom_line() +
+  geom_point(aes(x = grade, y = test_only, color = "Surr (Test only)"), data = df_plot) + 
+  geom_point(aes(x = grade, y = test_cog, color = "Surr (Test & Cog)"), data = df_plot) + 
+  geom_point(aes(x = grade, y = test_noncog, color = "Surr (Test & Cog & Noncog)"), data = df_plot) +
+  geom_line() + 
+  labs(
+    title = "Predicted Math Test Scores", 
+    y = "Predicted IRT Scores", 
+    x = "Grade"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+coef_7 <- run_comp("c7clslk")
+coef_6 <- run_comp("tch_cog_6")
+
+df_plot <- data.frame(
+  grade = c(5,8),
+  iv = c(coef_6[1], coef_7[1]), 
+  test_only = c(coef_6[2], coef_7[2]), 
+  test_cog = c(coef_6[3], coef_7[3])
+) 
+
+df_plot 
+
+##################
+# plots 
+##################
+
+ggplot() + 
+  geom_point(aes(x = grade, y = iv, color = "IV"), data = df_plot) + 
+  geom_line() +
+  geom_point(aes(x = grade, y = test_only, color = "Surr (Test only)"), data = df_plot) + 
+  geom_point(aes(x = grade, y = test_cog, color = "Surr (Test & Cog)"), data = df_plot) + 
+  labs(
+    title = "Predicted Math Test Scores"
+  ) + 
+  theme_minimal()
+```
+
+
+```{r}
+#############################
+# Test Surrogacy Assumptions 
+#############################
+
+covar_list <- "c6r4mscl + c5r4mscl + c4r4mscl + age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
+
+mod <- run_ols("c7r4mscl", covar_list, df)
+
+summary(mod[[1]])
+```
+
+
+
+
+
+
