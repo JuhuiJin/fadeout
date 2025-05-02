@@ -292,10 +292,10 @@ ecls_clean <- ecls_clean %>%
     ), 
     child_social_7 = rowMeans(pick(matches("c7(fitin|closcl|clostc|enjoy|clslik|clsoth|clscar|frover|gofrnd|frout|talk)_z")), na.rm = T)
   )
+
 ```
 
 # Define Control Variables for Regressions at each Grade Level 
-
 
 ```{r}
 balance_df <- ecls_clean %>%
@@ -304,7 +304,7 @@ balance_df <- ecls_clean %>%
     entry_rule = as.Date(sprintf("%04d-%02d-%02d", s2yyfive, s2mmfive, s2ddfive)), 
     dob = as.Date(sprintf("%04d-%02d-%02d", dobyy, dobmm, dobdd)), 
     when_five = dob + years(5)
-  ) %>% 
+  ) %>%
   group_by(entry_rule) %>%
   mutate(
     interval = case_when(
@@ -401,19 +401,27 @@ run_ols <- function(outcome_var, covar_list, df) {
 
 selected_covars <- c(
   "p1ageent", "wkincome", "p1numsib", "p1firkdg", "p1disabl",
-  "c7r4mscl", "c6r4mscl", "c5r4mscl", "c4r4mscl", "c3r4mscl",
+  "c7r4mscl", "c6r4mscl", "c5r4mscl", "c4r4mscl", "c1r4mscl", "c2r4mscl",
+  "c7r4rscl", "c6r4rscl", "c5r4rscl", "c3r4rscl","c2r4rscl","c1r4rscl", "c4r4rscl", 
   "par_4", "par_5", "par_6",
-  "tch_cog_6", "tch_cog_7", "tch_noncog_7",
+  "tch_cog_6", "tch_cog_7", "tch_noncog_7", 
   "tch_cog_5", "tch_cog_4", "tch_noncog_4", "tch_noncog_5", "tch_noncog_6",
-  "g7honors", "interval", "age_test_1", "p7schgrd"
+  #"g7honors", "n7honors", "m7honors", 
+  # "c4r4rscl", "c3r4mscl", 
+  "interval", "age_test_1", "p7schgrd", 
+  "t5learn", "t5contro", "t5interp", "t5extern", "t5intern"
 )
 
 filter_covars <- c(
   "p1ageent", "wkincome", "p1numsib", "p1firkdg", "p1disabl",
-  "c7r4mscl", "c6r4mscl", "c5r4mscl", 
-  "par_5", "par_6", 
-  "tch_cog_6", "tch_noncog_6", "tch_cog_7", "tch_noncog_7",
-  "g7honors", "interval", "age_test_1", "p7schgrd"
+  "c7r4mscl", "c6r4mscl", "c5r4mscl", "c1r4mscl", "c2r4mscl", "c4r4rscl",
+  "c7r4rscl", "c6r4rscl", "c5r4rscl",
+  #"par_5", "par_6", 
+  #"tch_cog_6", "tch_noncog_6", "tch_cog_7", "tch_noncog_7",
+  "interval", "age_test_1"
+  #"p7schgrd", 
+  #"g7honors", "m7honors", 
+  #"t5learn", "t5contro", "t5interp", "t5extern", "t5intern"
 )
 
 df <- balance_df_all %>%
@@ -432,194 +440,106 @@ df <- df %>%
     )
   )
 
-# Include just test score surrogates 
-covar_list <- "c6r4mscl_z + c5r4mscl_z + wkincome + p1numsib + p1firkdg + p1disabl"
-
-model_test <- run_ols("c7r4mscl_z", covar_list, df)
-
-beta_test <- as.matrix(model_test[[1]]$coefficients)
-
-X <- model.matrix(
-  ~ c6r4mscl_z + c5r4mscl_z + wkincome + p1numsib + p1firkdg + p1disabl,
-  data = df
-)
-
-df$y_hat_test <- as.vector(X %*% beta_test)
-
-covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
-
-model <- run_iv("y_hat_test", covar_list, df)
-
-summary(model[[1]])
-```
-
-
-
-```{r}
-df <- df %>%
-  filter(if_all(c(tch_cog_6, par_6), ~!is.na(.)))
-
-# Include non-cognitive surrogates
-covar_list <- "c6r4mscl_z + c5r4mscl_z + tch_cog_6 + par_6 + wkincome + p1numsib + p1firkdg + p1disabl"
-
-model_cog <- run_ols("c7r4mscl_z", covar_list, df)
-
-beta_cog <- as.matrix(model_cog[[1]]$coefficients)
-
-X <- model.matrix(
-  ~ c6r4mscl_z + c5r4mscl_z + tch_cog_6 + par_6 + wkincome + p1numsib + p1firkdg + p1disabl,
-  data = df
-)
-
-df$y_hat_test <- as.vector(X %*% beta_cog)
-
-covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
-
-model <- run_iv("y_hat_test", covar_list, df)
-
-summary(model[[1]])
 nrow(df)
+head(balance_df_all)
 ```
+
+
 
 ```{r}
 ##################
 # just cog 
 #################
+# wkincome + p1numsib + p1firkdg + p1disabl
 
-covar_list <- "wkincome + p1numsib + p1firkdg + p1disabl"
+base_control <- " wkincome + p1numsib + p1firkdg + p1disabl"
 
-run_comp <- function(outcome, test_control, cog_control, noncog_control) {
-all_covars <- c(covar_list, test_control)
-# Include just test score surrogates 
-formula_str <- paste(all_covars, collapse = " + ")
-formula <- as.formula(formula_str)
+compute_surrogacy <- function(outcome, all_covars){
+  formula_str <- paste(all_covars, collapse = " + ")
+  formula <- as.formula(paste0(outcome, "~", formula_str))
 
-model_test <- run_ols(outcome, formula, df)
+  model <- run_ols(outcome, formula_str, df)
 
-beta_test <- as.matrix(model_test[[1]]$coefficients)
+  beta <- as.matrix(model[[1]]$coefficients)
 
-X <- model.matrix(
-  ~ formula,
-  data = df
-)
+  X <- model.matrix(
+    formula,
+    data = df
+  )
 
-df$y_hat_test <- as.vector(X %*% beta_test)
+  df$y_hat <- as.vector(X %*% beta)
+  
+  model <- run_iv("y_hat", paste0("age_test_1", "+", base_control), df)
 
-covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
+  summary(model[[1]])
 
-model_test <- run_iv("y_hat_test", covar_list, df)
-
-summary(model_test[[1]])
-
-coef_test <- model_test[[1]]$coefficients[["age_test_1"]]
-
-##################
-# with cog
-##################
-
-all_covars <- c(covar_list, cog_control)
-# Include just test score surrogates 
-formula_str <- paste(all_covars, collapse = " + ")
-formula <- as.formula(formula_str)
-
-# Include non-cognitive surrogates
-#covar_list <- "c6r4mscl + c5r4mscl + tch_cog_6 + par_6 + wkincome + p1numsib + p1firkdg + p1disabl"
-
-model_cog <- run_ols(outcome, formula, df)
-
-beta_cog <- as.matrix(model_cog[[1]]$coefficients)
-
-X <- model.matrix(
-  ~ formula,
-  data = df
-)
-
-df$y_hat_test <- as.vector(X %*% beta_cog)
-
-covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
-
-model_cog <- run_iv("y_hat_test", covar_list, df)
-
-summary(model_cog[[1]])
-
-coef_cog <- model_cog[[1]]$coefficients[["age_test_1"]]
-
-##################
-# with non-cog
-##################
-
-# Include non-cognitive surrogates
-all_covars <- c(covar_list, noncog_control)
-formula_str <- paste(all_covars, collapse = " + ")
-formula <- as.formula(formula_str)
-
-model_noncog <- run_ols(outcome, formula, df)
-
-beta_noncog <- as.matrix(model_noncog[[1]]$coefficients)
-
-X <- model.matrix(
-  ~ formula,
-  data = df
-)
-
-df$y_hat_test <- as.vector(X %*% beta_noncog)
-
-covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
-
-model_noncog <- run_iv("y_hat_test", covar_list, df)
-
-summary(model_noncog[[1]])
-
-coef_noncog <- model_noncog[[1]]$coefficients[["age_test_1"]]
-
-##################
-# test iv
-##################
-
-covar_list <- "age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
-model <- run_iv(outcome, covar_list, df)
-summary(model[[1]])
-
-coef_iv <- model[[1]]$coefficients[["age_test_1"]]
-
-return(c(coef_iv, coef_test, coef_cog, coef_noncog))
+  coef <- model[[1]]$coefficients[["age_test_1"]]
+  
+  return(coef)
 }
 
-nrow(df)
+run_comp <- function(outcome, test_control, cog_control, noncog_control) {
+  
+  #######################
+  # Surrogate Estimates 
+  #######################
+  
+  all_covars <- c(base_control, test_control)
+  coef_test <- compute_surrogacy(outcome, all_covars)
+  
+  all_covars <- c(base_control, test_control, cog_control)
+  coef_cog <- compute_surrogacy(outcome, all_covars) 
+  
+  all_covars <- c(base_control, test_control, cog_control, noncog_control)
+  coef_noncog <- compute_surrogacy(outcome, all_covars)
+  
+  #######################
+  # IV Estimate 
+  #######################
+
+  model <- run_iv(outcome, paste0("age_test_1", "+", base_control), df)
+  coef_iv <- model[[1]]$coefficients[["age_test_1"]]
+
+  return(c(coef_iv, coef_test, coef_cog, coef_noncog))
+}
 ```
 
 
 ```{r}
-coef_7 <- run_comp("g7honors", c("c6r4mscl", "c5r4mscl"), c("tch_cog_6", "par_6"))
-coef_6 <- run_comp("p7schgrd")
+test_control <- "c5r4mscl"
+cog_control <- "tch_cog_5"
+noncog_control <- "t5learn + t5extern + t5intern + t5contro + t5interp + par_5"
+
+coef_7 <- run_comp("c7r4mscl", test_control, cog_control, noncog_control)
+coef_6 <- run_comp("c6r4mscl", test_control, cog_control, noncog_control)
 
 df_plot <- data.frame(
   grade = c(5,8),
-  iv = c(coef_6[1], coef_7[1]), 
-  test_only = c(coef_6[2], coef_7[2]), 
-  test_cog = c(coef_6[3], coef_7[3]), 
+  iv = c(coef_6[1], coef_7[1]),
+  test_only = c(coef_6[2], coef_7[2]),
+  test_cog = c(coef_6[3], coef_7[3]),
   test_noncog = c(coef_6[4], coef_7[4])
 )
-
-df_plot 
 
 ##################
 # plots
 ##################
 
-ggplot() + 
+ggplot() +
   geom_point(aes(x = grade, y = iv, color = "IV"), data = df_plot) + 
   geom_line() +
   geom_point(aes(x = grade, y = test_only, color = "Surr (Test only)"), data = df_plot) + 
   geom_point(aes(x = grade, y = test_cog, color = "Surr (Test & Cog)"), data = df_plot) + 
   geom_point(aes(x = grade, y = test_noncog, color = "Surr (Test & Cog & Noncog)"), data = df_plot) +
-  geom_line() + 
+  geom_line() +
   labs(
     title = "Predicted Math Test Scores", 
     y = "Predicted IRT Scores", 
     x = "Grade"
   ) +
   theme_minimal()
+
+nrow(df)
 ```
 
 
@@ -652,20 +572,271 @@ ggplot() +
 ```
 
 
+
+# Latent Unconfoundedness Assumption 
 ```{r}
-#############################
-# Test Surrogacy Assumptions 
-#############################
+base_control <- "p1firkdg"
 
-covar_list <- "c6r4mscl + c5r4mscl + c4r4mscl + age_test_1 +  wkincome + p1numsib + p1firkdg + p1disabl"
+compute_lu <- function(outcome, aux_outcome) {
+  formula_str <- paste0("age_test_1", "+", base_control)
+  formula <- as.formula(paste0(aux_outcome, "~", formula_str))
+  
+  # Run and define aux model, i.e. W --> S
+  model_aux <- run_iv(aux_outcome, paste0("age_test_1", "+", base_control), df)
+  beta_aux <- as.matrix(model_aux[[1]]$coefficients)
+  
+  X <- model.matrix(
+    formula,
+    data = df
+  )
+  
+  # Define s hat, beta 
+  df$s_hat <- as.vector(X %*% beta_aux)
+  df$epsilon <- as.vector(df$s_hat - df[[aux_outcome]])
+  
+  # Run final regression, W,S
+  model <- run_ols(outcome, paste0("epsilon + age_test_1", "+", base_control), df)
+  
+  coef <- model[[1]]$coefficients[["age_test_1"]]
+  
+  return(coef)
+}
 
-mod <- run_ols("c7r4mscl", covar_list, df)
+coef_1 <- compute_lu("g7honors", "c2r4mscl")
 
-summary(mod[[1]])
+summary(coef_7[[1]])
+coef_1
+```
+
+
+```{R}
+base_control <- " wkincome + p1numsib + p1firkdg + p1disabl"
+
+for (i in c(1,2,4,5,6,7)) {
+  # run model
+  model_output <- run_ols(paste0("c", i, "r4mscl"), paste0(paste0("age_test_1", "+"), base_control), df)
+  
+  assign(paste0("model_ols_", i), model_output[[1]])
+  assign(paste0("se_ols_", i), model_output[[2]])
+}
+
+models_ols_all <- list(
+  model_ols_1, 
+  model_ols_2,
+  model_ols_4, 
+  model_ols_5,
+  model_ols_6,
+  model_ols_7
+)
+
+se_ols_all <- list(
+  se_ols_1, 
+  se_ols_2,
+  se_ols_4, 
+  se_ols_5,
+  se_ols_6,
+  se_ols_7
+)
+
+stargazer(
+  models_ols_all,
+  #model_iv_2, model_iv_3, model_iv_4, model_iv_5, model_iv_6, model_iv_7, 
+  se = se_ols_all,
+  type = "latex",
+  title = "Fade-out of Entry Age Effect on Test Scores", 
+  out.header = FALSE, 
+  star.cutoffs = c(0.05), 
+  digits = 2, 
+  #omit = c("p1hfamil", "w1raceth", "wkincome", "p1hmemp", "p1hdemp", "w1momed", "w1daded", "p1numsib", "w1dadscr", "w1momscr", "p1disabl",  "Constant"), 
+  add.lines = list(
+            c("SES Control", rep("Yes", 7)), 
+            c("School Math Mean control", rep("Yes", 7)), 
+            c("\\hline", rep("", 7))
+          ), 
+  covariate.labels = c("Age of Entry (Months)", "First Time Kindergartener"), 
+  column.labels = c("K Fall", "K Spring", "1st Fall", "1st Spring", "3rd Spring", "5th Spring", "8th Spring")
+)
 ```
 
 
 
 
+```{R}
+###################
+# Bootstrapped SE 
+################### 
 
+compute_surrogacy <- function(outcome, all_covars, data){
+  formula_str <- paste(all_covars, collapse = " + ")
+  formula <- as.formula(paste0(outcome, "~", formula_str))
+
+  model <- run_ols(outcome, formula_str, data)
+
+  beta <- as.matrix(model[[1]]$coefficients)
+
+  X <- model.matrix(
+    formula,
+    data = data
+  )
+
+  data$y_hat <- as.vector(X %*% beta)
+  
+  model <- run_iv("y_hat", paste0("age_test_1", "+", base_control), data)
+
+  summary(model[[1]])
+
+  coef <- model[[1]]$coefficients[["age_test_1"]]
+  
+  return(coef)
+}
+
+beta_6 = matrix(NA, 10^4, 1)
+beta_7= matrix(NA, 10^4, 1)
+sims = 1:10^4
+
+run_bootstrap <- function(outcome, all_covars){
+  beta_table <- matrix(NA, 10^4, 1)
+  
+  for (s in sims){
+  df_sim <- df[sample(1:nrow(df), replace = TRUE), ]
+  
+  coef <- compute_surrogacy(outcome, all_covars, df_sim)
+  
+  beta_table[s,1] <- coef
+  }
+  
+  return(beta_table)
+}
+
+all_covars <- c(base_control, test_control)
+se_6 <- run_bootstrap("c6r4mscl", all_covars)
+ci_l_6 = quantile(se_6, 0.025, na.rm = FALSE)
+ci_u_6 = quantile(se_6, 0.975, na.rm = FALSE)
+
+se_7 <- run_bootstrap("c7r4mscl", all_covars)
+ci_l_7 = quantile(se_7, 0.025, na.rm = FALSE)
+ci_u_7 = quantile(se_7, 0.975, na.rm = FALSE)
+
+coef_df <- data.frame(
+  grade = c(5,8), 
+  ci_u = c(ci_u_6, ci_u_7), 
+  ci_l = c(ci_l_6, ci_l_7)
+)
+
+iv_6 <- run_iv("c6r4mscl", paste0("age_test_1", "+", base_control), df)
+iv_7 <- run_iv("c7r4mscl", paste0("age_test_1", "+", base_control), df)
+
+se_iv_6 <- iv_6[[2]]["age_test_1"]
+se_iv_7 <- iv_7[[2]]["age_test_1"]
+
+coef_df_iv <- data.frame(
+  grade = c(5,8), 
+  se = c(iv_6[[2]]["age_test_1"], iv_7[[2]]["age_test_1"]), 
+  coef = c(coef(iv_6[[1]])["age_test_1"], coef(iv_7[[1]])["age_test_1"])
+)
+```
+
+
+
+```{r}
+test_control <- "c5r4mscl"
+cog_control <- "tch_cog_5"
+noncog_control <- "t5learn + t5extern + t5intern + t5contro + t5interp + par_5"
+
+coef_7 <- run_comp("c7r4mscl", test_control, cog_control, noncog_control)
+coef_6 <- run_comp("c6r4mscl", test_control, cog_control, noncog_control)
+
+df_plot <- data.frame(
+  grade = c(5,8),
+  iv = c(coef_6[1], coef_7[1]),
+  test_only = c(coef_6[2], coef_7[2]),
+  test_cog = c(coef_6[3], coef_7[3]),
+  test_noncog = c(coef_6[4], coef_7[4])
+)
+
+##################
+# plots
+##################
+
+legend_order <- c(
+  "Bootstrap CI", 
+  "IV CI", 
+  "IV", 
+  "Surr: Test only", 
+  "Surr: Test + Cog", 
+  "Surr: Test + Cog + Noncog" 
+)
+
+surrogate_plot <- ggplot() +
+  # Error bars for IV
+  geom_errorbar(data = coef_df_iv, 
+                aes(x = grade, ymin = coef - se, ymax = coef + se, color = factor("IV CI", levels = legend_order)), 
+                alpha = 0.5, width = 0.2) +
+  
+  # Error bars for bootstrap
+  geom_errorbar(data = coef_df, 
+                aes(x = grade, ymin = ci_l, ymax = ci_u, color = factor("Bootstrap CI", levels = legend_order)), 
+                alpha = 0.5, width = 0.2) +
+
+  # Points
+  geom_point(aes(x = grade, y = iv, color = factor("IV", levels = legend_order)), data = df_plot, size = 2.5) + 
+  geom_point(aes(x = grade, y = test_only, color = factor("Surr: Test only", levels = legend_order)), data = df_plot, size = 2.5) + 
+  geom_point(aes(x = grade, y = test_cog, color = factor("Surr: Test + Cog", levels = legend_order)), data = df_plot, size = 2.5) + 
+  geom_point(aes(x = grade, y = test_noncog, color = factor("Surr: Test + Cog + Noncog", levels = legend_order)), data = df_plot, size = 2.5) +
+
+  labs(
+    title = "Predicted Effect on Math Test Scores", 
+    y = "Predicted IRT Scores", 
+    x = "Grade", 
+    color = "Estimate Type"
+  ) + 
+  
+  scale_color_manual(values = c(
+    "IV CI" = "black",
+    "Bootstrap CI" = "steelblue",
+    "IV" = "black", 
+    "Surr: Test only" = "steelblue", 
+    "Surr: Test + Cog" = "darkblue", 
+    "Surr: Test + Cog + Noncog" = "lightblue"
+  )) +
+
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Times"),
+    axis.text.x = element_text(size = 13, margin = margin(t = 10)), 
+    axis.title.x = element_text(size = 13, margin = margin(t = 20)), 
+    axis.text.y = element_text(size = 13, margin = margin(t = 10)), 
+    axis.title.y = element_text(size = 13, margin = margin(t = 20)),
+    legend.title = element_text(size = 13),
+    legend.text = element_text(size = 12), 
+    plot.title = element_text(size = 18, hjust = 0.5 )
+  )
+
+
+ggsave(file.path(output_path, "surrogate_plot.png"), plot = surrogate_plot, width = 8, height = 5, dpi = 300, bg = "white")
+```
+
+
+```{r}
+iv_plot <- ggplot() + 
+  # Points for both samples
+  geom_point(data = coef_df_all, aes(x = grade, y = coef, color = "Full Sample", group = 1)) + 
+  geom_line(data = coef_df_all, aes(x = grade, y = coef, color = "Full Sample", group = 1)) + 
+  geom_point(data = coef_df_drop, aes(x = grade, y = coef, color = "Restricted Sample"), group = 1) + 
+  geom_line(data = coef_df_drop, aes(x = grade, y = coef, color = "Restricted Sample"), group = 1) + 
+  # Ribbons for both samples
+  geom_ribbon(data = coef_df_all, 
+              aes(x = grade, ymin = coef - se, ymax = coef + se, fill = "Full Sample"), 
+              alpha = 0.1, group = 1) + 
+  geom_ribbon(data = coef_df_drop, 
+              aes(x = grade, ymin = coef - se, ymax = coef + se, fill = "Restricted Sample"), 
+              alpha = 0.1, group = 1) +
+  theme_minimal(base_size = 16) + 
+  labs(
+    title = "Effect of Earlier Entry on Math IRT Scores Across Grades", 
+    x = "Data Collection Round", 
+    y = "IV Coefficient", 
+    color = "Sample", 
+    fill = "Sample"
+```
 

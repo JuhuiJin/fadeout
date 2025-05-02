@@ -95,8 +95,18 @@ teacher <- read_dta(file.path(external_path, "ecls/ECLSK_BaseYear_Teacher_STATA.
   clean_names()
 ```
 
-# Further Data Cleaning 
 
+```{r}
+ecls_clean <- ecls_clean %>%
+  mutate(class_size = a5girls + a5boys) %>%
+  mutate(treatment3 = as.numeric(class_size <= 26))
+
+mod <- lm(c6r4mscl ~ treatment3, data = ecls_clean)
+summary(mod)
+```
+
+
+# Further Data Cleaning 
 ```{r}
 ##########################
 # Define Age at Exam Date
@@ -711,6 +721,8 @@ assmtmm_plot <- ecls_clean %>%
 
 print(assmtmm_plot)
 ggsave(file.path(output_path, "assmtmm_plot.png"), plot = assmtmm_plot, width = 8, height = 5, dpi = 300, bg = "white")
+
+ecls_clean
 ```
 
 # F-Test 
@@ -1386,7 +1398,7 @@ balance_df_all <- balance_df_all %>%
   mutate(p7schgrd = as.numeric(p7schgrd)) %>%
   mutate(p7schgrd = -p7schgrd) 
 
-covar_list <- "p1hfamil + wkincome + p1numsib + p1firkdg + p1disabl + sch_math_mean_1"
+covar_list <- "p1hfamil + wkincome + p1numsib + p1firkdg + p1disabl"
   
 for (i in c(1,4,5,6,7)) {
   # run model
@@ -1972,7 +1984,14 @@ for (i in c(1,2,4,6,7)) {
   ecls_new_clean_exp <- calculate_school_means(ecls_new_clean_exp, i, "x12par2ed_i", "par2ed")
 }
 
+ah <- ecls_new %>%
+  clean_names() %>%
+  mutate(class_size_k = pmax(a2aenrol, a2penrol, a2denrol, na.rm = T), 
+         class_size_1 = pmax(a4enrol, na.rm))
 
+
+ecls_new %>%
+  dplyr::select(A4ENROL)
 ```
 
 
